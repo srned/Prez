@@ -1,0 +1,6 @@
+Prez
+----
+
+Prez is a server which provides distributed coordination. Internally, it uses Raft consensus protocol. The project is in the early stages.
+
+Happy Coding!
