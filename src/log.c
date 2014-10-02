@@ -251,8 +251,8 @@ int logAppendEntries(clusterMsgDataAppendEntries entries) {
     int i=0;
     logEntry *e;
 
-    e = (logEntry*) entries.logEntries;
-    for(i=0;i<ntohs(entries.logEntriesCount);i++) {
+    e = (logEntry*) entries.log_entries;
+    for(i=0;i<ntohs(entries.log_entries_count);i++) {
         if(logWriteEntry(e)) {
             prezLog(PREZ_NOTICE, "log write error");
             return PREZ_ERR;

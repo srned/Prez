@@ -406,8 +406,8 @@ int clusterProcessPacket(clusterLink *link) {
         prezLog(PREZ_DEBUG,"--- Received VoteRequest term %lld, name: %s, logindex %lld, logterm %lld",
                 hdr->data.requestvote.vote.term, 
                 hdr->data.requestvote.vote.candidateid,
-                hdr->data.requestvote.vote.lastLogIndex,
-                hdr->data.requestvote.vote.lastLogTerm);
+                hdr->data.requestvote.vote.last_log_index,
+                hdr->data.requestvote.vote.last_log_term);
 
         clusterProcessRequestVote(link, hdr->data.requestvote.vote);
     } else if (type == CLUSTERMSG_TYPE_APPENDENTRIES) {
@@ -419,8 +419,8 @@ int clusterProcessPacket(clusterLink *link) {
         prezLog(PREZ_DEBUG,"--- Received AppendEntries term %lld, name: %s, logindex %lld, leadercommit %lld",
                 hdr->data.appendentries.entries.term, 
                 hdr->data.appendentries.entries.leaderid,
-                hdr->data.appendentries.entries.prevLogIndex,
-                hdr->data.appendentries.entries.leaderCommitIndex);
+                hdr->data.appendentries.entries.prev_log_index,
+                hdr->data.appendentries.entries.leader_commit_index);
 
         clusterProcessAppendEntries(link, hdr->data.appendentries.entries);
     } else if (type == CLUSTERMSG_TYPE_VOTEREQUEST_RESP) {
@@ -440,10 +440,10 @@ int clusterProcessPacket(clusterLink *link) {
         explen += sizeof(clusterMsgDataResponseAppendEntries);
         if (totlen != explen) return 1;
 
-        prezLog(PREZ_DEBUG,"--- Received AppendEntriesResponse term %lld, index: %lld, commitIndex: %lld, ok: %d",
+        prezLog(PREZ_DEBUG,"--- Received AppendEntriesResponse term %lld, index: %lld, commit_index: %lld, ok: %d",
                 hdr->data.responseappendentries.entries.term, 
                 hdr->data.responseappendentries.entries.index,
-                hdr->data.responseappendentries.entries.commitIndex,
+                hdr->data.responseappendentries.entries.commit_index,
                 hdr->data.responseappendentries.entries.ok);
 
         clusterProcessResponseAppendEntries(link, hdr->data.responseappendentries.entries);
@@ -618,7 +618,7 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
     logEntryNode *entry;
     listNode *ln;
 
-    long long lastLogIndex = 0, lastLogTerm = 0;
+    long long last_log_index = 0, last_log_term = 0;
 
     if (vote.term < server.cluster->current_term) {
         prezLog(PREZ_DEBUG, "Deny Vote, old term: %lld", vote.term);
@@ -648,11 +648,11 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
     ln = listIndex(server.cluster->log_entries, -1);
     if (ln) {
         entry = ln->value;
-        lastLogIndex = entry->log_entry.index;
-        lastLogTerm = entry->log_entry.term;
+        last_log_index = entry->log_entry.index;
+        last_log_term = entry->log_entry.term;
     }
 
-    if (lastLogIndex > vote.lastLogIndex || lastLogTerm > vote.lastLogTerm) {
+    if (last_log_index > vote.last_log_index || last_log_term > vote.last_log_term) {
         prezLog(PREZ_DEBUG, "Deny Vote. Out of date log");
         goto deny_vote;
     }
@@ -717,7 +717,7 @@ void clusterProcessAppendEntries(clusterLink *link,
         server.cluster->voted_for = sdsempty();
     }
 
-    if (logTruncate(entries.prevLogIndex, entries.prevLogTerm)) {
+    if (logTruncate(entries.prev_log_index, entries.prev_log_term)) {
         prezLog(PREZ_DEBUG, "log truncate error");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
@@ -729,7 +729,7 @@ void clusterProcessAppendEntries(clusterLink *link,
         return;
     }
 
-    if (logCommitIndex(entries.leaderCommitIndex)) {
+    if (logCommitIndex(entries.leader_commit_index)) {
         prezLog(PREZ_DEBUG, "log commit entries error");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
@@ -787,9 +787,9 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
             server.cluster->leader = sdsempty();
             server.cluster->voted_for = sdsempty();
         } else if (entries.term == node->last_sent_term && 
-                entries.commitIndex >= node->prev_log_index) {
+                entries.commit_index >= node->prev_log_index) {
             prezLog(PREZ_DEBUG, "Failed to truncate or we missed previous response");
-            node->prev_log_index = entries.commitIndex;
+            node->prev_log_index = entries.commit_index;
         } else if (node->prev_log_index > 0) {
             node->prev_log_index--;
             if (node->prev_log_index > entries.index) {
@@ -806,13 +806,13 @@ void clusterSendRequestVote(void) {
     clusterMsg *hdr = (clusterMsg*) buf;
     logEntryNode *entry;
     listNode *ln;
-    long long lastLogIndex = 0, lastLogTerm = 0;
+    long long last_log_index = 0, last_log_term = 0;
 
     ln = listIndex(server.cluster->log_entries, -1);
     if (ln) {
         entry = listNodeValue(ln);
-        lastLogIndex = entry->log_entry.index;
-        lastLogTerm = entry->log_entry.term;
+        last_log_index = entry->log_entry.index;
+        last_log_term = entry->log_entry.term;
     }
 
     clusterBuildMessageHdr(hdr, CLUSTERMSG_TYPE_VOTEREQUEST);
@@ -820,8 +820,8 @@ void clusterSendRequestVote(void) {
     hdr->data.requestvote.vote.term = server.cluster->current_term;
     memcpy(hdr->data.requestvote.vote.candidateid, myself->name, 
             PREZ_CLUSTER_NAMELEN);
-    hdr->data.requestvote.vote.lastLogIndex = lastLogIndex;
-    hdr->data.requestvote.vote.lastLogTerm = lastLogTerm;
+    hdr->data.requestvote.vote.last_log_index = last_log_index;
+    hdr->data.requestvote.vote.last_log_term = last_log_term;
     prezLog(PREZ_DEBUG, "Broadcasting RequestVote term: %lld, buf:%s, sizeof(clustermsg): %lu, totlen: %d\n", 
             server.cluster->current_term, buf, sizeof(clusterMsg), ntohl(hdr->totlen));
 
@@ -854,7 +854,7 @@ void clusterSendResponseAppendEntries(clusterLink *link, int ok) {
             buf, sizeof(clusterMsg), ntohl(hdr->totlen));
     hdr->data.responseappendentries.entries.term = server.cluster->current_term;
     hdr->data.responseappendentries.entries.index = server.cluster->current_index;
-    hdr->data.responseappendentries.entries.commitIndex = server.cluster->commit_index;
+    hdr->data.responseappendentries.entries.commit_index = server.cluster->commit_index;
     hdr->data.responseappendentries.entries.ok = ok;
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
 }
@@ -875,9 +875,9 @@ void clusterSendAppendEntries(clusterLink *link) {
     hdr->data.appendentries.entries.term = server.cluster->current_term;
     memcpy(hdr->data.appendentries.entries.leaderid, myself->name,
             PREZ_CLUSTER_NAMELEN);
-    hdr->data.appendentries.entries.prevLogIndex = node->prev_log_index;
-    hdr->data.appendentries.entries.prevLogTerm = 0;
-    hdr->data.appendentries.entries.leaderCommitIndex = 
+    hdr->data.appendentries.entries.prev_log_index = node->prev_log_index;
+    hdr->data.appendentries.entries.prev_log_term = 0;
+    hdr->data.appendentries.entries.leader_commit_index = 
         server.cluster->commit_index;
     node->last_sent_entry = NULL; 
 
@@ -891,19 +891,19 @@ void clusterSendAppendEntries(clusterLink *link) {
                 node->prev_log_index-server.cluster->start_index);
         while(ln && logcount <= server.cluster->log_max_entries_per_request) {
             le_node = listNodeValue(ln);
-            memcpy(&(hdr->data.appendentries.entries.logEntries[logcount]),
+            memcpy(&(hdr->data.appendentries.entries.log_entries[logcount]),
                     &(le_node->log_entry), sizeof(logEntry));
             ln_next = listNextNode(ln);
             logcount++;
             if (!ln_next) {
-                hdr->data.appendentries.entries.prevLogTerm = 
+                hdr->data.appendentries.entries.prev_log_term = 
                     le_node->log_entry.term;
                 node->last_sent_entry = listNodeValue(ln);
             }
             ln = ln_next;
         } 
     }
-    hdr->data.appendentries.entries.logEntriesCount = logcount;
+    hdr->data.appendentries.entries.log_entries_count = logcount;
     node->last_sent_term = server.cluster->current_term;
 
     totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);

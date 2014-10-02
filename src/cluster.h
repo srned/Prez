@@ -151,8 +151,8 @@ typedef struct clusterState {
 typedef struct {
     long long term;
     char candidateid[PREZ_CLUSTER_NAMELEN];
-    long long lastLogIndex;
-    long long lastLogTerm;
+    long long last_log_index;
+    long long last_log_term;
 } clusterMsgDataRequestVote;
 
 typedef struct {
@@ -163,17 +163,17 @@ typedef struct {
 typedef struct {
     long long term;
     char leaderid[PREZ_CLUSTER_NAMELEN];
-    long long prevLogIndex;
-    long long prevLogTerm;
-    long long leaderCommitIndex;
-    uint16_t logEntriesCount;
-    logEntry logEntries[1];    //Array of N logEntry structures
+    long long prev_log_index;
+    long long prev_log_term;
+    long long leader_commit_index;
+    uint16_t log_entries_count;
+    logEntry log_entries[1];    //Array of N logEntry structures
 } clusterMsgDataAppendEntries;
 
 typedef struct {
     long long term;
     long long index;
-    long long commitIndex;
+    long long commit_index;
     int ok;
 } clusterMsgDataResponseAppendEntries;
 
