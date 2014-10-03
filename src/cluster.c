@@ -413,7 +413,9 @@ int clusterProcessPacket(clusterLink *link) {
     } else if (type == CLUSTERMSG_TYPE_APPENDENTRIES) {
         uint32_t explen;
         explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
-        explen += sizeof(clusterMsgDataAppendEntries);
+        explen += (sizeof(clusterMsgDataAppendEntries) +
+                (hdr->data.appendentries.entries.log_entries_count-1) *
+                sizeof(logEntry));
         if (totlen != explen) return 1;
 
         prezLog(PREZ_DEBUG,"--- Received AppendEntries term %lld, name: %s, logindex %lld, leadercommit %lld",
@@ -747,7 +749,7 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
     int i=0;
 
     if (entries.ok == PREZ_OK) {
-        if (!node->last_sent_entry) {
+        if (node->last_sent_entry) {
             node->prev_log_index = node->last_sent_entry->log_entry.index;
 
             if (node->last_sent_entry->log_entry.term == server.cluster->current_term) {
@@ -868,10 +870,6 @@ void clusterSendAppendEntries(clusterLink *link) {
     int logcount = 0, totlen;
 
     clusterBuildMessageHdr(hdr, CLUSTERMSG_TYPE_APPENDENTRIES);
-    prezLog(PREZ_DEBUG, "Sending heartbeat buf:%s, sizeof(clustermsg): "
-            "%lu, totlen: %d\n", 
-            buf, sizeof(clusterMsg), ntohl(hdr->totlen));
-
     hdr->data.appendentries.entries.term = server.cluster->current_term;
     memcpy(hdr->data.appendentries.entries.leaderid, myself->name,
             PREZ_CLUSTER_NAMELEN);
@@ -910,6 +908,11 @@ void clusterSendAppendEntries(clusterLink *link) {
     totlen += (sizeof(clusterMsgDataAppendEntries)-sizeof(logEntry));
     totlen += (sizeof(logEntry)*logcount);
     hdr->totlen = htonl(totlen);
+
+    prezLog(PREZ_DEBUG, "Sending heartbeat buf:%s, sizeof(clustermsg): "
+            "%lu, totlen: %d\n",
+            buf, sizeof(clusterMsg), ntohl(hdr->totlen));
+
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
 }
 
@@ -928,7 +931,7 @@ void clusterCron(void) {
     dictIterator *di;
     dictEntry *de;
 
-    prezLog(PREZ_DEBUG, "State: %d", server.cluster->state);
+    //prezLog(PREZ_DEBUG, "State: %d", server.cluster->state);
 
     /* Check if we have disconnected nodes and re-establish the connection. */
     di = dictGetSafeIterator(server.cluster->nodes);
