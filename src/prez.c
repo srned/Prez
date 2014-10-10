@@ -64,6 +64,11 @@ struct sharedObjectsStruct shared;
 struct prezServer server;
 struct prezCommand *commandTable;
 
+struct prezCommand prezCommandTable[] = {
+    {"get",getCommand,2,0,NULL,1,1,1,0,0},
+    {"set",setCommand,-3,0,NULL,1,1,1,0,0}
+};
+
 /* Return the UNIX time in microseconds */
 long long ustime(void) {
     struct timeval tv;
@@ -277,6 +282,61 @@ void usage() {
     exit(1);
 }
 
+/*====================== Command handling ==================== */
+void getCommand(prezClient *c) {
+    prezLog(PREZ_DEBUG, "getCommand");
+}
+
+void setCommand(prezClient *c) {
+    prezLog(PREZ_DEBUG, "setCommand");
+}
+
+/* ====================== Commands lookup and execution ===================== */
+
+struct prezCommand *lookupCommand(sds name) {
+    return dictFetchValue(server.commands, name);
+}
+
+/* Call() is the core of prez execution of a command */
+void call(prezClient *c) {
+    long long start, duration;
+
+    /* Call the command. */
+    start = ustime();
+    clusterProcessCommand(c);
+    //c->cmd->proc(c);
+    duration = ustime()-start;
+
+}
+
+/* If this function gets called we already read a whole
+ * command, arguments are in the client argv/argc fields.
+ * processCommand() execute the command or prepare the
+ * server for a bulk read from the client.
+ *
+ * If 1 is returned the client is still alive and valid and
+ * other operations can be performed by the caller. Otherwise
+ * if 0 is returned the client was destroyed (i.e. after QUIT). */
+int processCommand(prezClient *c) {
+    /* Now lookup the command and check ASAP about trivial error conditions
+     * such as wrong arity, bad command name and so forth. */
+    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
+    if (!c->cmd) {
+        addReplyErrorFormat(c,"unknown command '%s'",
+            (char*)c->argv[0]->ptr);
+        return PREZ_OK;
+    } else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
+               (c->argc < -c->cmd->arity)) {
+        addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
+            c->cmd->name);
+        return PREZ_OK;
+    }
+    //FIXME: cluster redirect 
+
+    call(c);
+    return PREZ_OK;
+}
+
 static void sigtermHandler(int sig) {
     PREZ_NOTUSED(sig);
 
@@ -372,6 +432,49 @@ int listenToPort(int port, int *fds, int *count) {
     return PREZ_OK;
 }
 
+/* =========================== Server initialization ======================== */
+
+void createSharedObjects(void) {
+    int j;
+
+    shared.crlf = createObject(PREZ_STRING,sdsnew("\r\n"));
+    shared.ok = createObject(PREZ_STRING,sdsnew("+OK\r\n"));
+    shared.err = createObject(PREZ_STRING,sdsnew("-ERR\r\n"));
+    shared.emptybulk = createObject(PREZ_STRING,sdsnew("$0\r\n\r\n"));
+    shared.czero = createObject(PREZ_STRING,sdsnew(":0\r\n"));
+    shared.cone = createObject(PREZ_STRING,sdsnew(":1\r\n"));
+    shared.cnegone = createObject(PREZ_STRING,sdsnew(":-1\r\n"));
+    shared.nullbulk = createObject(PREZ_STRING,sdsnew("$-1\r\n"));
+    shared.nullmultibulk = createObject(PREZ_STRING,sdsnew("*-1\r\n"));
+    shared.emptymultibulk = createObject(PREZ_STRING,sdsnew("*0\r\n"));
+    shared.queued = createObject(PREZ_STRING,sdsnew("+QUEUED\r\n"));
+    shared.wrongtypeerr = createObject(PREZ_STRING,sdsnew(
+                "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"));
+    shared.nokeyerr = createObject(PREZ_STRING,sdsnew(
+                "-ERR no such key\r\n"));
+    shared.syntaxerr = createObject(PREZ_STRING,sdsnew(
+                "-ERR syntax error\r\n"));
+    shared.sameobjecterr = createObject(PREZ_STRING,sdsnew(
+                "-ERR source and destination objects are the same\r\n"));
+    shared.outofrangeerr = createObject(PREZ_STRING,sdsnew(
+                "-ERR index out of range\r\n"));
+    shared.space = createObject(PREZ_STRING,sdsnew(" "));
+    shared.colon = createObject(PREZ_STRING,sdsnew(":"));
+    shared.plus = createObject(PREZ_STRING,sdsnew("+"));
+
+    shared.del = createStringObject("DEL",3);
+    for (j = 0; j < PREZ_SHARED_INTEGERS; j++) {
+        shared.integers[j] = createObject(PREZ_STRING,(void*)(long)j);
+        shared.integers[j]->encoding = PREZ_ENCODING_INT;
+    }
+    for (j = 0; j < PREZ_SHARED_BULKHDR_LEN; j++) {
+        shared.mbulkhdr[j] = createObject(PREZ_STRING,
+                sdscatprintf(sdsempty(),"*%d\r\n",j));
+        shared.bulkhdr[j] = createObject(PREZ_STRING,
+                sdscatprintf(sdsempty(),"$%d\r\n",j));
+    }
+}
+
 
 void initServer() {
     int j;
@@ -388,6 +491,7 @@ void initServer() {
     server.pid = getpid();
     server.clients = listCreate();
 
+    createSharedObjects();
     //FIXME: adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+PREZ_EVENTLOOP_FDSET_INCR);
 
@@ -438,7 +542,15 @@ void initServer() {
 }
 
 void populateCommandTable(void) {
-    return;
+    int j;
+    int numcommands = sizeof(prezCommandTable)/sizeof(struct prezCommand);
+
+    for (j = 0; j < numcommands; j++) {
+        int retval;
+        struct prezCommand *c = prezCommandTable+j;
+        retval = dictAdd(server.commands, sdsnew(c->name), c);
+        prezAssert(retval == DICT_OK);
+    }
 }
 
 void initServerConfig() {

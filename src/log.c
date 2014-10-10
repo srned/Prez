@@ -29,6 +29,7 @@
 
 #include "prez.h"
 #include "cluster.h"
+#include "endianconv.h"
 
 #include <signal.h>
 #include <fcntl.h>
@@ -81,7 +82,7 @@ int loadLogFile(void) {
         argc = atoi(buf+1);
         if (argc < 1) goto fmterr;
 
-        entry = zmalloc(sizeof(entry));
+        entry = zmalloc(sizeof(*entry));
         for (j = 0; j < argc; j++) {
             if (fgets(buf,sizeof(buf),fp) == NULL) goto readerr;
             if (buf[0] != '$') goto fmterr;
@@ -163,12 +164,12 @@ int logTruncate(long long index, long long term) {
         }
 
         entry = listNodeValue(listIndex(server.cluster->log_entries, 
-                    index - server.cluster->start_index));
+                    index - server.cluster->start_index-1));
         ftruncate(server.cluster->log_fd, entry->position);
         server.cluster->log_current_size = entry->position;
         listRewind(server.cluster->log_entries, &li);
         li.next = listIndex(server.cluster->log_entries,
-                index - server.cluster->start_index - 1);
+                index - server.cluster->start_index-1);
         while ((ln = listNext(&li)) != NULL) {
             logEntryNode *le = listNodeValue(ln);
             listDelNode(server.cluster->log_entries,ln);
@@ -203,7 +204,7 @@ sds catLogEntry(sds dst, int argc, robj **argv) {
     return dst;
 }
 
-int logWriteEntry(logEntry *e) {
+int logWriteEntry(logEntry e) {
     ssize_t nwritten;
     robj *argv[4];
     sds buf = sdsempty();
@@ -211,23 +212,23 @@ int logWriteEntry(logEntry *e) {
 
     if (listLength(server.cluster->log_entries) > 0) {
         en = listNodeValue(listIndex(server.cluster->log_entries,-1));
-        if (e->term < en->log_entry.term) {
+        if (e.term < en->log_entry.term) {
             prezLog(PREZ_NOTICE, "Cannot append entry with earlier term." 
                     "term:%lld index:%lld, last term:%lld index:%lld",
-                    e->term, e->index, en->log_entry.term, en->log_entry.index);
+                    e.term, e.index, en->log_entry.term, en->log_entry.index);
             return PREZ_ERR;
-        } else if (e->term == en->log_entry.term && e->index <= en->log_entry.index) {
+        } else if (e.term == en->log_entry.term && e.index <= en->log_entry.index) {
             prezLog(PREZ_NOTICE, "Cannot append entry with earlier index." 
                     "term:%lld index:%lld, last term:%lld index:%lld",
-                    e->term, e->index, en->log_entry.term, en->log_entry.index);
+                    e.term, e.index, en->log_entry.term, en->log_entry.index);
             return PREZ_ERR;
         }
     }
 
-    argv[0] = createStringObjectFromLongLong(ntohl(e->index));
-    argv[1] = createStringObjectFromLongLong(ntohl(e->term));
-    argv[2] = createStringObject(e->commandName, PREZ_COMMAND_NAMELEN);
-    argv[3] = createStringObject(e->command, PREZ_COMMAND_NAMELEN);
+    argv[0] = createStringObjectFromLongLong(e.index);
+    argv[1] = createStringObjectFromLongLong(e.term);
+    argv[2] = createStringObject(e.commandName, PREZ_COMMAND_NAMELEN);
+    argv[3] = createStringObject(e.command, PREZ_COMMAND_NAMELEN);
     buf = catLogEntry(buf, 4, argv);
     decrRefCount(argv[0]);
     decrRefCount(argv[1]);
@@ -238,10 +239,18 @@ int logWriteEntry(logEntry *e) {
         prezLog(PREZ_NOTICE,"log write incomplete");
     }
     
-    en = zmalloc(sizeof(en));
-    memcpy(&(en->log_entry),e,sizeof(logEntry));
+    en = zmalloc(sizeof(*en));
+    en->log_entry.term = e.index;
+    en->log_entry.index = e.term;
+    memcpy(en->log_entry.commandName, e.commandName, PREZ_COMMAND_NAMELEN);
+    memcpy(en->log_entry.command, e.command, PREZ_COMMAND_NAMELEN);
+    //memcpy(&en->log_entry,&e,sizeof(logEntry));
     en->position = server.cluster->log_current_size;
     server.cluster->log_current_size += sdslen(buf);
+    prezLog(PREZ_DEBUG,"en term:%lld/%lld index:%lld, %lu", 
+            en->log_entry.term,
+            e.term,
+            en->log_entry.index, sizeof(en));
     listAddNodeTail(server.cluster->log_entries,en);
 
     return PREZ_OK;
@@ -252,8 +261,9 @@ int logAppendEntries(clusterMsgDataAppendEntries entries) {
     logEntry *e;
 
     e = (logEntry*) entries.log_entries;
+    prezLog(PREZ_DEBUG,"count:%d",ntohs(entries.log_entries_count));
     for(i=0;i<ntohs(entries.log_entries_count);i++) {
-        if(logWriteEntry(e)) {
+        if(logWriteEntry(entries.log_entries[i])) {
             prezLog(PREZ_NOTICE, "log write error");
             return PREZ_ERR;
         }
@@ -282,6 +292,7 @@ int logCommitIndex(long long index) {
         server.cluster->commit_index = entry->log_entry.index;
 
         /* Process command which is what commit is really about */
+        prezLog(PREZ_DEBUG,"cmd invoke");
         /* return if join command */
     }
     return PREZ_OK;
@@ -290,4 +301,16 @@ int logCommitIndex(long long index) {
 int logSync(void) {
     if(fsync(server.cluster->log_fd) == -1) return PREZ_ERR;
     return PREZ_OK;
+}
+
+long long logCurrentIndex(void) {
+    listNode *ln;
+    logEntryNode *entry;
+
+    ln = listIndex(server.cluster->log_entries, -1);
+    if (ln) {
+        entry = ln->value;
+        return(entry->log_entry.index);
+    }
+    return 0;
 }

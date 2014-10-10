@@ -234,10 +234,11 @@ void clusterSendResponseAppendEntries(clusterLink *link, int ok);
 int loadLogFile(void); 
 int logTruncate(long long index, long long term);
 sds catLogEntry(sds dst, int argc, robj **argv);
-int logWriteEntry(logEntry *e);
+int logWriteEntry(logEntry e);
 int logAppendEntries(clusterMsgDataAppendEntries entries);
 int logCommitIndex(long long index);
 int logSync(void);
+long long logCurrentIndex(void);
 
 /* Functions as macros */
 #define quorumSize ((dictSize(server.cluster->nodes) / 2) + 1)

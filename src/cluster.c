@@ -162,6 +162,7 @@ void clusterInit(void) {
     server.cluster->election_timeout = PREZ_CLUSTER_ELECTION_TIMEOUT;
     server.cluster->heartbeat_interval = PREZ_CLUSTER_HEARTBEAT_INTERVAL;
     server.cluster->synced_nodes = dictCreate(&clusterNodesDictType,NULL);
+    server.cluster->start_index = 0;
     server.cluster->current_term = 0;
     server.cluster->commit_index = 0;
     server.cluster->votes_granted = 0;
@@ -286,7 +287,7 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         anetEnableTcpNoDelay(NULL,cfd);
 
         /* Use non-blocking I/O for cluster messages. */
-        prezLog(PREZ_VERBOSE,"Accepted cluster node %s:%d", cip, cport);
+        prezLog(PREZ_VERBOSE,"Accepted cluster node %s:%d cfd:%d", cip, cport, cfd);
         /* Create a link object we use to handle the connection.
          * It gets passed to the readable handler when data is available.
          * Initiallly the link->node pointer is set to NULL as we don't know
@@ -381,6 +382,28 @@ void clusterRenameNode(clusterNode *node, char *newname) {
     clusterAddNode(node);
 }
 
+void clusterProcessCommand(prezClient *c) {
+    logEntry entry;
+    long long commit_index;
+
+    prezLog(PREZ_DEBUG,"clusterProcessCommand");
+    entry.index = logCurrentIndex()+1;
+    entry.term = server.cluster->current_term;
+    memcpy(entry.commandName,c->cmd->name,strlen(c->cmd->name)+1);
+    memcpy(entry.command,c->cmd->name,strlen(c->cmd->name)+1);
+
+    logWriteEntry(entry);
+
+    dictAdd(server.cluster->synced_nodes,
+            sdsnewlen(myself->name,PREZ_CLUSTER_NAMELEN),&node_synced);
+
+    if(dictSize(server.cluster->nodes) == 1) {
+        commit_index = logCurrentIndex();
+        logCommitIndex(commit_index);
+        prezLog(PREZ_DEBUG,"commit index: %lld", commit_index);
+    }
+}
+
 int clusterProcessPacket(clusterLink *link) {
     clusterMsg *hdr = (clusterMsg*) link->rcvbuf;
     uint32_t totlen = ntohl(hdr->totlen);
@@ -414,7 +437,7 @@ int clusterProcessPacket(clusterLink *link) {
         uint32_t explen;
         explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
         explen += (sizeof(clusterMsgDataAppendEntries) +
-                (hdr->data.appendentries.entries.log_entries_count-1) *
+                (ntohs(hdr->data.appendentries.entries.log_entries_count)-1) *
                 sizeof(logEntry));
         if (totlen != explen) return 1;
 
@@ -442,7 +465,8 @@ int clusterProcessPacket(clusterLink *link) {
         explen += sizeof(clusterMsgDataResponseAppendEntries);
         if (totlen != explen) return 1;
 
-        prezLog(PREZ_DEBUG,"--- Received AppendEntriesResponse term %lld, index: %lld, commit_index: %lld, ok: %d",
+        prezLog(PREZ_DEBUG,"--- Received AppendEntriesResponse port:%d term %lld, index: %lld, commit_index: %lld, ok: %d",
+                link->node->port,
                 hdr->data.responseappendentries.entries.term, 
                 hdr->data.responseappendentries.entries.index,
                 hdr->data.responseappendentries.entries.commit_index,
@@ -767,6 +791,7 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
                     clusterNode *cnode = dictGetVal(de);
                     log_indices[i] = cnode->prev_log_index;
                 }
+                dictReleaseIterator(di);
                 qsort(log_indices,dictSize(server.cluster->nodes),sizeof(long long),
                         compareIndices);
                 reverseIndices(log_indices,dictSize(server.cluster->nodes));
@@ -874,7 +899,7 @@ void clusterSendAppendEntries(clusterLink *link) {
     memcpy(hdr->data.appendentries.entries.leaderid, myself->name,
             PREZ_CLUSTER_NAMELEN);
     hdr->data.appendentries.entries.prev_log_index = node->prev_log_index;
-    hdr->data.appendentries.entries.prev_log_term = 0;
+    hdr->data.appendentries.entries.prev_log_term = node->last_sent_term;
     hdr->data.appendentries.entries.leader_commit_index = 
         server.cluster->commit_index;
     node->last_sent_entry = NULL; 
@@ -889,8 +914,23 @@ void clusterSendAppendEntries(clusterLink *link) {
                 node->prev_log_index-server.cluster->start_index);
         while(ln && logcount <= server.cluster->log_max_entries_per_request) {
             le_node = listNodeValue(ln);
-            memcpy(&(hdr->data.appendentries.entries.log_entries[logcount]),
+            hdr->data.appendentries.entries.log_entries[logcount].term = 
+                le_node->log_entry.term;
+            hdr->data.appendentries.entries.log_entries[logcount].index = 
+                le_node->log_entry.index;
+            memcpy(hdr->data.appendentries.entries.log_entries[logcount].commandName,
+                    le_node->log_entry.commandName, PREZ_COMMAND_NAMELEN);
+            memcpy(hdr->data.appendentries.entries.log_entries[logcount].command,
+                    le_node->log_entry.command, PREZ_COMMAND_NAMELEN);
+            prezLog(PREZ_DEBUG,"AE term:%lld, index:%lld, cmd:%s, cmd:%s",
+                    hdr->data.appendentries.entries.log_entries[logcount].term,
+                    hdr->data.appendentries.entries.log_entries[logcount].index,
+                    hdr->data.appendentries.entries.log_entries[logcount].commandName,
+                    hdr->data.appendentries.entries.log_entries[logcount].command);
+
+            /*memcpy(&(hdr->data.appendentries.entries.log_entries[logcount]),
                     &(le_node->log_entry), sizeof(logEntry));
+            */
             ln_next = listNextNode(ln);
             logcount++;
             if (!ln_next) {
@@ -901,7 +941,7 @@ void clusterSendAppendEntries(clusterLink *link) {
             ln = ln_next;
         } 
     }
-    hdr->data.appendentries.entries.log_entries_count = logcount;
+    hdr->data.appendentries.entries.log_entries_count = htons(logcount);
     node->last_sent_term = server.cluster->current_term;
 
     totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
@@ -909,9 +949,11 @@ void clusterSendAppendEntries(clusterLink *link) {
     totlen += (sizeof(logEntry)*logcount);
     hdr->totlen = htonl(totlen);
 
-    prezLog(PREZ_DEBUG, "Sending heartbeat buf:%s, sizeof(clustermsg): "
-            "%lu, totlen: %d\n",
-            buf, sizeof(clusterMsg), ntohl(hdr->totlen));
+    prezLog(PREZ_DEBUG, "Sending heartbeat to port:%d, buf:%s, sizeof(clustermsg): "
+            "%lu, totlen: %d logcount: %d\n",
+            node->port, buf, sizeof(clusterMsg), 
+            ntohl(hdr->totlen), 
+            ntohs(hdr->data.appendentries.entries.log_entries_count));
 
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
 }
@@ -1018,6 +1060,7 @@ void clusterCron(void) {
                 clusterSendHeartbeat(node->link);
             }
         }
+        dictReleaseIterator(di);
     }
 
 }

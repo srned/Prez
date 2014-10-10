@@ -384,7 +384,6 @@ struct prezCommand {
     char *name;
     prezCommandProc *proc;
     int arity;
-    char *sflags; /* Flags as string representation, one char per flag. */
     int flags;    /* The actual flags, obtained from the 'sflags' field. */
     /* Use a function to determine keys arguments in a command line.
      * Used for prez Cluster redirect. */
@@ -529,9 +528,18 @@ void prezLog(int level, const char *fmt, ...)
 void prezLog(int level, const char *fmt, ...);
 #endif
 
+/* Core */
+int processCommand(prezClient *c);
+struct prezCommand *lookupCommand(sds name);
+
+/* Command Prototypes */
+void getCommand(prezClient *c);
+void setCommand(prezClient *c);
+
 /* Cluster */
 void clusterInit(void);
 void clusterCron(void);
+void clusterProcessCommand(prezClient *c);
 
 /* Debugging stuff */
 void _prezAssertWithInfo(prezClient *c, robj *o, char *estr, char *file, int line);

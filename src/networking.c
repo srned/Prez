@@ -1119,11 +1119,8 @@ void processInputBuffer(prezClient *c) {
             resetClient(c);
         } else {
             /* Only reset the client when the command was executed. */
-            //FIXME: come back
-#if 0
             if (processCommand(c) == PREZ_OK)
                 resetClient(c);
-#endif
         }
     }
 }
