@@ -396,6 +396,7 @@ void clusterProcessCommand(prezClient *c) {
 
     dictAdd(server.cluster->synced_nodes,
             sdsnewlen(myself->name,PREZ_CLUSTER_NAMELEN),&node_synced);
+    myself->prev_log_index = entry.index;
 
     if(dictSize(server.cluster->nodes) == 1) {
         commit_index = logCurrentIndex();
@@ -789,6 +790,8 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
                         dictSize(server.cluster->nodes));
                 while((de = dictNext(di)) != NULL) {
                     clusterNode *cnode = dictGetVal(de);
+                    prezLog(PREZ_DEBUG,"node, port:%d, prev_index:%lld",
+                            cnode->port,cnode->prev_log_index);
                     log_indices[i] = cnode->prev_log_index;
                 }
                 dictReleaseIterator(di);
@@ -799,7 +802,7 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
                 if (commit_index > server.cluster->commit_index) {
                     logSync();
                     logCommitIndex(commit_index);
-                    prezLog(PREZ_DEBUG, "commit index: %lld", commit_index);
+                    prezLog(PREZ_DEBUG, "AE Response commit index: %lld", commit_index);
                 }
                 zfree(log_indices);
             }
@@ -880,7 +883,7 @@ void clusterSendResponseAppendEntries(clusterLink *link, int ok) {
     prezLog(PREZ_DEBUG, "Sending AppendEntries Response buf:%s, sizeof(clustermsg): %lu, totlen: %d\n", 
             buf, sizeof(clusterMsg), ntohl(hdr->totlen));
     hdr->data.responseappendentries.entries.term = server.cluster->current_term;
-    hdr->data.responseappendentries.entries.index = server.cluster->current_index;
+    hdr->data.responseappendentries.entries.index = logCurrentIndex();
     hdr->data.responseappendentries.entries.commit_index = server.cluster->commit_index;
     hdr->data.responseappendentries.entries.ok = ok;
     clusterSendMessage(link,buf,ntohl(hdr->totlen));

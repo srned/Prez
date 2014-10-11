@@ -163,17 +163,20 @@ int logTruncate(long long index, long long term) {
             return PREZ_ERR;
         }
 
-        entry = listNodeValue(listIndex(server.cluster->log_entries, 
-                    index - server.cluster->start_index-1));
-        ftruncate(server.cluster->log_fd, entry->position);
-        server.cluster->log_current_size = entry->position;
-        listRewind(server.cluster->log_entries, &li);
-        li.next = listIndex(server.cluster->log_entries,
-                index - server.cluster->start_index-1);
-        while ((ln = listNext(&li)) != NULL) {
-            logEntryNode *le = listNodeValue(ln);
-            listDelNode(server.cluster->log_entries,ln);
-            zfree(le);
+        if (index < server.cluster->start_index +
+                listLength(server.cluster->log_entries)) {
+            entry = listNodeValue(listIndex(server.cluster->log_entries,
+                        index - server.cluster->start_index-1));
+            ftruncate(server.cluster->log_fd, entry->position);
+            server.cluster->log_current_size = entry->position;
+            listRewind(server.cluster->log_entries, &li);
+            li.next = listIndex(server.cluster->log_entries,
+                    index - server.cluster->start_index-1);
+            while ((ln = listNext(&li)) != NULL) {
+                logEntryNode *le = listNodeValue(ln);
+                listDelNode(server.cluster->log_entries,ln);
+                zfree(le);
+            }
         }
     }
     return PREZ_OK;
@@ -247,11 +250,13 @@ int logWriteEntry(logEntry e) {
     //memcpy(&en->log_entry,&e,sizeof(logEntry));
     en->position = server.cluster->log_current_size;
     server.cluster->log_current_size += sdslen(buf);
-    prezLog(PREZ_DEBUG,"en term:%lld/%lld index:%lld, %lu", 
+    prezLog(PREZ_DEBUG,"Add to List: en term:%lld/%lld index:%lld, %lu",
             en->log_entry.term,
             e.term,
             en->log_entry.index, sizeof(en));
     listAddNodeTail(server.cluster->log_entries,en);
+    prezLog(PREZ_DEBUG,"listLength:%lu",
+            listLength(server.cluster->log_entries));
 
     return PREZ_OK;
 }
@@ -310,7 +315,10 @@ long long logCurrentIndex(void) {
     ln = listIndex(server.cluster->log_entries, -1);
     if (ln) {
         entry = ln->value;
+        prezLog(PREZ_DEBUG,"currentIndex:%lld",
+                entry->log_entry.index);
         return(entry->log_entry.index);
     }
+    prezLog(PREZ_DEBUG,"currentIndex:0");
     return 0;
 }
