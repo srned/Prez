@@ -303,8 +303,7 @@ void call(prezClient *c) {
 
     /* Call the command. */
     start = ustime();
-    clusterProcessCommand(c);
-    //c->cmd->proc(c);
+    c->cmd->proc(c);
     duration = ustime()-start;
 
 }
@@ -333,7 +332,7 @@ int processCommand(prezClient *c) {
     }
     //FIXME: cluster redirect 
 
-    call(c);
+    clusterProcessCommand(c);
     return PREZ_OK;
 }
 

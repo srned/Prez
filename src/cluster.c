@@ -393,6 +393,7 @@ void clusterProcessCommand(prezClient *c) {
     memcpy(entry.command,c->cmd->name,strlen(c->cmd->name)+1);
 
     logWriteEntry(entry);
+    //FIXME: Reset synced_nodes?
 
     dictAdd(server.cluster->synced_nodes,
             sdsnewlen(myself->name,PREZ_CLUSTER_NAMELEN),&node_synced);
@@ -792,13 +793,15 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
                     clusterNode *cnode = dictGetVal(de);
                     prezLog(PREZ_DEBUG,"node, port:%d, prev_index:%lld",
                             cnode->port,cnode->prev_log_index);
-                    log_indices[i] = cnode->prev_log_index;
+                    log_indices[i++] = cnode->prev_log_index;
                 }
                 dictReleaseIterator(di);
                 qsort(log_indices,dictSize(server.cluster->nodes),sizeof(long long),
                         compareIndices);
                 reverseIndices(log_indices,dictSize(server.cluster->nodes));
                 commit_index = log_indices[quorumSize-1];
+                prezLog(PREZ_DEBUG,"server commit_index:%lld, quorum commit_index:%lld",
+                        server.cluster->commit_index,commit_index);
                 if (commit_index > server.cluster->commit_index) {
                     logSync();
                     logCommitIndex(commit_index);
