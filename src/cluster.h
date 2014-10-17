@@ -131,6 +131,7 @@ typedef struct clusterState {
     mstime_t heartbeat_interval;
     mstime_t last_activity_time; /* Time of previous AppendEntries or VoteRequest */
     dict *synced_nodes;   /* Hash table of synced nodes name -> 1/0 */
+    dict *proc_clients;   /* Hash table of clients in processing -> index */
 
     // Log Specific
     char *log_filename;

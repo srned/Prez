@@ -149,6 +149,18 @@ dictType commandTableDictType = {
     NULL                       /* val destructor */
 };
 
+/* Cluster leader processing clients table, 
+ * sds string (index) -> prezClient struct pointer. */
+dictType clusterProcClientsDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    NULL                        /* val destructor */
+};
+
+
 /* Low level logging. To use only for very big messages, otherwise
  * prezLog() is to prefer. */
 void prezLogRaw(int level, const char *msg) {
@@ -289,6 +301,7 @@ void getCommand(prezClient *c) {
 
 void setCommand(prezClient *c) {
     prezLog(PREZ_DEBUG, "setCommand");
+    addReply(c,shared.ok);
 }
 
 /* ====================== Commands lookup and execution ===================== */
@@ -333,7 +346,8 @@ int processCommand(prezClient *c) {
     //FIXME: cluster redirect 
 
     clusterProcessCommand(c);
-    return PREZ_OK;
+    /* Fake ERR so that the client doesn't get reset */
+    return PREZ_ERR;
 }
 
 static void sigtermHandler(int sig) {

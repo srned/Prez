@@ -162,6 +162,8 @@ void clusterInit(void) {
     server.cluster->election_timeout = PREZ_CLUSTER_ELECTION_TIMEOUT;
     server.cluster->heartbeat_interval = PREZ_CLUSTER_HEARTBEAT_INTERVAL;
     server.cluster->synced_nodes = dictCreate(&clusterNodesDictType,NULL);
+    server.cluster->proc_clients = dictCreate(&clusterProcClientsDictType,NULL);
+
     server.cluster->start_index = 0;
     server.cluster->current_term = 0;
     server.cluster->commit_index = 0;
@@ -403,6 +405,9 @@ void clusterProcessCommand(prezClient *c) {
         commit_index = logCurrentIndex();
         logCommitIndex(commit_index);
         prezLog(PREZ_DEBUG,"commit index: %lld", commit_index);
+    } else {
+        dictAdd(server.cluster->proc_clients,
+                sdsfromlonglong(entry.index),c);
     }
 }
 

@@ -127,6 +127,9 @@ prezClient *createClient(int fd) {
  * data should be appended to the output buffers. */
 int prepareClientToWrite(prezClient *c) {
     if (c->fd <= 0) return PREZ_ERR; /* Fake client */
+    if (c->bufpos == 0 && listLength(c->reply) == 0 &&
+            aeCreateFileEvent(server.el, c->fd, AE_WRITABLE,
+                sendReplyToClient, c) == AE_ERR) return PREZ_ERR;
     return PREZ_OK;
 }
 

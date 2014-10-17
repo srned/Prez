@@ -243,8 +243,8 @@ int logWriteEntry(logEntry e) {
     }
     
     en = zmalloc(sizeof(*en));
-    en->log_entry.term = e.index;
-    en->log_entry.index = e.term;
+    en->log_entry.index = e.index;
+    en->log_entry.term = e.term;
     memcpy(en->log_entry.commandName, e.commandName, PREZ_COMMAND_NAMELEN);
     memcpy(en->log_entry.command, e.command, PREZ_COMMAND_NAMELEN);
     //memcpy(&en->log_entry,&e,sizeof(logEntry));
@@ -298,6 +298,15 @@ int logCommitIndex(long long index) {
 
         /* Process command which is what commit is really about */
         prezLog(PREZ_DEBUG,"cmd invoke");
+        if (server.cluster->state == PREZ_LEADER) {
+            prezClient *c;
+            c = dictFetchValue(server.cluster->proc_clients,
+                    sdsfromlonglong(entry->log_entry.index));
+            if(c) call(c);
+            dictDelete(server.cluster->proc_clients,
+                    sdsfromlonglong(entry->log_entry.index));
+        }
+
         /* return if join command */
     }
     return PREZ_OK;

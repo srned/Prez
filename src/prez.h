@@ -402,7 +402,7 @@ struct prezCommand {
 extern struct prezServer server;
 extern struct sharedObjectsStruct shared;
 extern dictType clusterNodesDictType;
-
+extern dictType clusterProcClientsDictType;
 
 /*-----------------------------------------------------------------------------
  * Functions prototypes
@@ -529,6 +529,7 @@ void prezLog(int level, const char *fmt, ...);
 #endif
 
 /* Core */
+void call(prezClient *c);
 int processCommand(prezClient *c);
 struct prezCommand *lookupCommand(sds name);
 
