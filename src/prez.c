@@ -318,6 +318,7 @@ void call(prezClient *c) {
     start = ustime();
     c->cmd->proc(c);
     duration = ustime()-start;
+    resetClient(c);
 
 }
 
