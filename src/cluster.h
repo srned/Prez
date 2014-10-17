@@ -168,7 +168,7 @@ typedef struct {
     long long prev_log_term;
     long long leader_commit_index;
     uint16_t log_entries_count;
-    logEntry log_entries[1];    //Array of N logEntry structures
+    logEntry log_entries[PREZ_LOG_MAX_ENTRIES_PER_REQUEST];    //Array of N logEntry structures
 } clusterMsgDataAppendEntries;
 
 typedef struct {

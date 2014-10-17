@@ -948,12 +948,13 @@ void clusterSendAppendEntries(clusterLink *link) {
                 hdr->data.appendentries.entries.prev_log_term = 
                     le_node->log_entry.term;
                 node->last_sent_entry = listNodeValue(ln);
+                node->last_sent_term = le_node->log_entry.term;
+
             }
             ln = ln_next;
         } 
     }
     hdr->data.appendentries.entries.log_entries_count = htons(logcount);
-    node->last_sent_term = server.cluster->current_term;
 
     totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
     totlen += (sizeof(clusterMsgDataAppendEntries)-sizeof(logEntry));
