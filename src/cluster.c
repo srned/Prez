@@ -948,8 +948,6 @@ void clusterSendAppendEntries(clusterLink *link) {
             */
             ln_next = listNextNode(ln);
             logcount++;
-            hdr->data.appendentries.entries.prev_log_term =
-                le_node->log_entry.term;
             node->last_sent_entry = listNodeValue(ln);
             node->prev_log_term = le_node->log_entry.term;
             ln = ln_next;
