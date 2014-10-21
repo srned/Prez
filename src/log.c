@@ -230,9 +230,10 @@ int logWriteEntry(logEntry e) {
 
     argv[0] = createStringObjectFromLongLong(e.index);
     argv[1] = createStringObjectFromLongLong(e.term);
-    argv[2] = createStringObject(e.commandName, PREZ_COMMAND_NAMELEN);
-    argv[3] = createStringObject(e.command, PREZ_COMMAND_NAMELEN);
+    argv[2] = createStringObject(e.commandName,strlen(e.commandName));
+    argv[3] = createStringObject(e.command,strlen(e.command));
     buf = catLogEntry(buf, 4, argv);
+    prezLog(PREZ_DEBUG,"logWriteEntry:%s",buf);
     decrRefCount(argv[0]);
     decrRefCount(argv[1]);
     decrRefCount(argv[2]);
