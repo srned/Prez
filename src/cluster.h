@@ -107,6 +107,7 @@ struct clusterNode {
     mstime_t voted_time;     /* Last time we voted for a slave of this master */
     mstime_t last_activity_time; 
     long long prev_log_index;
+    long long prev_log_term;
     logEntryNode *last_sent_entry;
     long long last_sent_term;
     char ip[PREZ_IP_STR_LEN];  /* Latest known IP address of this node */

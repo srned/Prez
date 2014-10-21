@@ -400,6 +400,7 @@ void clusterProcessCommand(prezClient *c) {
     dictAdd(server.cluster->synced_nodes,
             sdsnewlen(myself->name,PREZ_CLUSTER_NAMELEN),&node_synced);
     myself->prev_log_index = entry.index;
+    myself->prev_log_term = entry.term;
 
     if(dictSize(server.cluster->nodes) == 1) {
         commit_index = logCurrentIndex();
@@ -910,10 +911,11 @@ void clusterSendAppendEntries(clusterLink *link) {
     memcpy(hdr->data.appendentries.entries.leaderid, myself->name,
             PREZ_CLUSTER_NAMELEN);
     hdr->data.appendentries.entries.prev_log_index = node->prev_log_index;
-    hdr->data.appendentries.entries.prev_log_term = node->last_sent_term;
+    hdr->data.appendentries.entries.prev_log_term = node->prev_log_term;
     hdr->data.appendentries.entries.leader_commit_index = 
         server.cluster->commit_index;
-    node->last_sent_entry = NULL; 
+    node->last_sent_entry = NULL;
+    node->last_sent_term = server.cluster->current_term;
 
     //FIXME
     if (node->prev_log_index < server.cluster->start_index || 
@@ -921,6 +923,8 @@ void clusterSendAppendEntries(clusterLink *link) {
                     server.cluster->start_index))) {
         prezLog(PREZ_DEBUG, "skip log_entries");
     } else {
+        prezLog(PREZ_DEBUG,"prev_log_index:%lld listLength:%lu",
+                node->prev_log_index, listLength(server.cluster->log_entries));
         ln = listIndex(server.cluster->log_entries, 
                 node->prev_log_index-server.cluster->start_index);
         while(ln && logcount <= server.cluster->log_max_entries_per_request) {
@@ -944,13 +948,10 @@ void clusterSendAppendEntries(clusterLink *link) {
             */
             ln_next = listNextNode(ln);
             logcount++;
-            if (!ln_next) {
-                hdr->data.appendentries.entries.prev_log_term = 
-                    le_node->log_entry.term;
-                node->last_sent_entry = listNodeValue(ln);
-                node->last_sent_term = le_node->log_entry.term;
-
-            }
+            hdr->data.appendentries.entries.prev_log_term =
+                le_node->log_entry.term;
+            node->last_sent_entry = listNodeValue(ln);
+            node->prev_log_term = le_node->log_entry.term;
             ln = ln_next;
         } 
     }
