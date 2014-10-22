@@ -378,7 +378,7 @@ struct prezServer {
     int watchdog_period;  /* Software watchdog period in ms. 0 = off */
 };
 
-typedef void prezCommandProc(prezClient *c);
+typedef void prezCommandProc(prezClient *c, robj **argv, int argc);
 typedef int *prezGetKeysProc(struct prezCommand *cmd, robj **argv, int argc, int *numkeys);
 struct prezCommand {
     char *name;
@@ -534,8 +534,8 @@ int processCommand(prezClient *c);
 struct prezCommand *lookupCommand(sds name);
 
 /* Command Prototypes */
-void getCommand(prezClient *c);
-void setCommand(prezClient *c);
+void getCommand(prezClient *c, robj **argv, int argc);
+void setCommand(prezClient *c, robj **argv, int argc);
 
 /* Cluster */
 void clusterInit(void);

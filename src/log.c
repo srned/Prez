@@ -246,8 +246,8 @@ int logWriteEntry(logEntry e) {
     en = zmalloc(sizeof(*en));
     en->log_entry.index = e.index;
     en->log_entry.term = e.term;
-    memcpy(en->log_entry.commandName, e.commandName, PREZ_COMMAND_NAMELEN);
-    memcpy(en->log_entry.command, e.command, PREZ_COMMAND_NAMELEN);
+    memcpy(en->log_entry.commandName, e.commandName,strlen(e.commandName));
+    memcpy(en->log_entry.command, e.command,strlen(e.command));
     //memcpy(&en->log_entry,&e,sizeof(logEntry));
     en->position = server.cluster->log_current_size;
     server.cluster->log_current_size += sdslen(buf);
@@ -306,6 +306,37 @@ int logCommitIndex(long long index) {
             if(c) call(c);
             dictDelete(server.cluster->proc_clients,
                     sdsfromlonglong(entry->log_entry.index));
+        } else {
+            int i,argc;
+            sds *argv;
+            robj **oargv;
+            struct prezCommand *cmd;
+
+            argv = sdssplitargs(entry->log_entry.command,&argc);
+            if (argv == NULL) return PREZ_OK;
+            oargv = zmalloc(sizeof(robj*)*argc);
+            for(i=0;i<argc;i++) {
+                if (sdslen(argv[i])) {
+                    oargv[i] = createObject(PREZ_STRING,argv[i]);
+                } else {
+                    sdsfree(argv[i]);
+                }
+                prezLog(PREZ_DEBUG,"%s ", argv[i]);
+            }
+            zfree(argv);
+            cmd = lookupCommand(oargv[0]->ptr);
+            if (!cmd) {
+                prezLog(PREZ_DEBUG,"unknown command '%s'",
+                        (char*)oargv[0]->ptr);
+                return PREZ_OK;
+            } else if ((cmd->arity > 0 && cmd->arity != argc) ||
+                    (argc < -cmd->arity)) {
+                prezLog(PREZ_DEBUG,"wrong number of arguments for '%s' command",
+                        cmd->name);
+                return PREZ_OK;
+            }
+            cmd->proc(NULL,oargv,argc);
+            for(i=0;i<argc;i++) decrRefCount(oargv[i]);
         }
 
         /* return if join command */

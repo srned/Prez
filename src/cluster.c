@@ -387,12 +387,27 @@ void clusterRenameNode(clusterNode *node, char *newname) {
 void clusterProcessCommand(prezClient *c) {
     logEntry entry;
     long long commit_index;
+    int j;
+    sds cmdrepr = sdsnew("");
 
     prezLog(PREZ_DEBUG,"clusterProcessCommand");
     entry.index = logCurrentIndex()+1;
     entry.term = server.cluster->current_term;
     memcpy(entry.commandName,c->cmd->name,strlen(c->cmd->name)+1);
-    memcpy(entry.command,c->cmd->name,strlen(c->cmd->name)+1);
+    //memcpy(entry.command,c->cmd->name,strlen(c->cmd->name)+1);
+
+    for (j=0;j<c->argc;j++) {
+        //FIXME: Assume obj is sds
+        cmdrepr = sdscatprintf(cmdrepr,(char*)c->argv[j]->ptr,
+                sdslen(c->argv[j]->ptr));
+        if (j != c->argc-1)
+            cmdrepr = sdscatlen(cmdrepr," ",1);
+    }
+    sdscatlen(cmdrepr,"\n",1);
+    memcpy(entry.command,cmdrepr,sdslen(cmdrepr));
+    prezLog(PREZ_DEBUG,"cmdrepr:%s, command:%s",
+            cmdrepr,entry.command);
+    sdsfree(cmdrepr);
 
     logWriteEntry(entry);
     //FIXME: Reset synced_nodes?

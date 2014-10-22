@@ -295,13 +295,13 @@ void usage() {
 }
 
 /*====================== Command handling ==================== */
-void getCommand(prezClient *c) {
+void getCommand(prezClient *c, robj **argv, int argc) {
     prezLog(PREZ_DEBUG, "getCommand");
 }
 
-void setCommand(prezClient *c) {
+void setCommand(prezClient *c, robj **argv, int argc) {
     prezLog(PREZ_DEBUG, "setCommand");
-    addReply(c,shared.ok);
+    if(c) addReply(c,shared.ok);
 }
 
 /* ====================== Commands lookup and execution ===================== */
@@ -316,7 +316,7 @@ void call(prezClient *c) {
 
     /* Call the command. */
     start = ustime();
-    c->cmd->proc(c);
+    c->cmd->proc(c,c->argv,c->argc);
     duration = ustime()-start;
     resetClient(c);
 
