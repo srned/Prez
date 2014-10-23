@@ -108,7 +108,7 @@ QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)
 endif
 
 PREZ_SERVER_NAME=prez-server
-PREZ_SERVER_OBJ=adlist.o ae.o anet.o dict.o prez.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o util.o config.o debug.o endianconv.o crc64.o networking.o object.o cluster.o log.o
+PREZ_SERVER_OBJ=adlist.o ae.o anet.o dict.o prez.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o util.o config.o debug.o endianconv.o crc64.o networking.o object.o db.o cluster.o log.o
 
 all: $(PREZ_SERVER_NAME)
 	@echo ""

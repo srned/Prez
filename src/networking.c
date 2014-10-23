@@ -270,6 +270,7 @@ void _addReplyStringToList(prezClient *c, char *s, size_t len) {
  * -------------------------------------------------------------------------- */
 
 void addReply(prezClient *c, robj *obj) {
+    if(!c) return;
     if (prepareClientToWrite(c) != PREZ_OK) return;
 
     /* This is an important place where we can avoid copy-on-write

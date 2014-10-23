@@ -112,6 +112,7 @@ typedef long long mstime_t; /* millisecond time type. */
 
 /* Static server configuration */
 #define PREZ_DEFAULT_HZ        10      /* Time interrupt calls/sec. */
+
 #define PREZ_MIN_HZ            1
 #define PREZ_MAX_HZ            500
 #define PREZ_SERVERPORT   7981
@@ -120,6 +121,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define PREZ_BINDADDR_MAX 16
 #define PREZ_DEFAULT_UNIX_SOCKET_PERM 0
 #define PREZ_MAXIDLETIME       0       /* default client timeout: infinite */
+#define PREZ_DEFAULT_DBNUM     1
 #define PREZ_CONFIGLINE_MAX    1024
 #define PREZ_MAX_WRITE_PER_EVENT (1024*64)
 #define PREZ_SHARED_SELECT_CMDS 10
@@ -305,6 +307,14 @@ struct sharedObjectsStruct {
 
 extern clientBufferLimitsConfig clientBufferLimitsDefaults[PREZ_CLIENT_TYPE_COUNT];
 
+/* Prez database representation. There are multiple databases identified
+ * by integers from 0 (the default database) up to the max configured
+ * database. The database number is the 'id' field in the structure. */
+typedef struct prezDb {
+    dict *dict;                 /* The keyspace for this DB */
+    int id;                     /* Database ID */
+} prezDb;
+
 struct clusterState;
 
 struct prezServer {
@@ -313,6 +323,7 @@ struct prezServer {
     char *name;                 /* node name */
     char *configfile;           /* Absolute config file path, or NULL */
     int hz;                     /* call frequency in hertz */
+    prezDb *db;
     dict *commands;             /* Command table */
     aeEventLoop *el;
     unsigned lruclock:PREZ_LRU_BITS; /* Clock for LRU eviction */
@@ -344,11 +355,14 @@ struct prezServer {
     long long stat_numcommands;     /* Number of processed commands */
     long long stat_numconnections;  /* Number of connections received */
     long long stat_rejected_conn;   /* Clients rejected because of maxclients */
+    long long stat_keyspace_hits;   /* Number of successful lookups of keys */
+    long long stat_keyspace_misses; /* Number of failed lookups of keys */
     /* Configuration */
     int verbosity;                  /* Loglevel in prez.conf */
     int maxidletime;                /* Client timeout in seconds */
     int tcpkeepalive;               /* Set SO_KEEPALIVE if non-zero. */
     size_t client_max_querybuf_len; /* Limit for client query buffer length */
+    int dbnum;                      /* Total number of configured DBs */
     int daemonize;                  /* True if running as a daemon */
     clientBufferLimitsConfig client_obuf_limits[PREZ_CLIENT_TYPE_COUNT];
     /* Logging */
@@ -532,6 +546,7 @@ void prezLog(int level, const char *fmt, ...);
 void call(prezClient *c);
 int processCommand(prezClient *c);
 struct prezCommand *lookupCommand(sds name);
+void resetServerStats(void);
 
 /* Command Prototypes */
 void getCommand(prezClient *c, robj **argv, int argc);
@@ -551,5 +566,17 @@ void prezLogObjectDebugInfo(robj *o);
 void sigsegvHandler(int sig, siginfo_t *info, void *secret);
 
 unsigned int getLRUClock(void);
+
+/* db.c -- Keyspace access API */
+robj *lookupKey(prezDb *db, robj *key);
+robj *lookupKeyRead(prezDb *db, robj *key);
+robj *lookupKeyWrite(prezDb *db, robj *key);
+robj *lookupKeyReadOrReply(prezClient *c, robj *key, robj *reply);
+robj *lookupKeyWriteOrReply(prezClient *c, robj *key, robj *reply);
+void dbAdd(prezDb *db, robj *key, robj *val);
+void dbOverwrite(prezDb *db, robj *key, robj *val);
+void setKey(prezDb *db, robj *key, robj *val);
+int dbExists(prezDb *db, robj *key);
+int dbDelete(prezDb *db, robj *key);
 
 #endif

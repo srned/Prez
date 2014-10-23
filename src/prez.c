@@ -120,6 +120,14 @@ void dictSdsDestructor(void *privdata, void *val)
     sdsfree(val);
 }
 
+void dictPrezObjectDestructor(void *privdata, void *val)
+{
+    DICT_NOTUSED(privdata);
+
+    if (val == NULL) return; /* Values of swapped out keys as set to NULL */
+    decrRefCount(val);
+}
+
 unsigned int dictSdsHash(const void *key) {
     return dictGenHashFunction((unsigned char*)key, sdslen((char*)key));
 }
@@ -159,6 +167,17 @@ dictType clusterProcClientsDictType = {
     dictSdsDestructor,          /* key destructor */
     NULL                        /* val destructor */
 };
+
+/* Db->dict, keys are sds strings, vals are Prez objects. */
+dictType dbDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    dictPrezObjectDestructor   /* val destructor */
+};
+
 
 
 /* Low level logging. To use only for very big messages, otherwise
@@ -295,13 +314,21 @@ void usage() {
 }
 
 /*====================== Command handling ==================== */
+
+void setGenericCommand(prezClient *c, robj *key, robj *val) {
+    setKey(&server.db[0],key,val);
+    addReply(c,shared.ok);
+
+}
+
 void getCommand(prezClient *c, robj **argv, int argc) {
     prezLog(PREZ_DEBUG, "getCommand");
 }
 
 void setCommand(prezClient *c, robj **argv, int argc) {
     prezLog(PREZ_DEBUG, "setCommand");
-    if(c) addReply(c,shared.ok);
+    if (argc != 3) addReply(c,shared.syntaxerr);
+    setGenericCommand(c,argv[1],argv[2]);
 }
 
 /* ====================== Commands lookup and execution ===================== */
@@ -489,6 +516,17 @@ void createSharedObjects(void) {
     }
 }
 
+/* Resets the stats that we expose via INFO or other means that we want
+ * to reset via CONFIG RESETSTAT. The function is also used in order to
+ * initialize these fields in initServer() at server startup. */
+void resetServerStats(void) {
+    server.stat_numcommands = 0;
+    server.stat_numconnections = 0;
+    server.stat_keyspace_misses = 0;
+    server.stat_keyspace_hits = 0;
+    server.stat_rejected_conn = 0;
+}
+
 
 void initServer() {
     int j;
@@ -508,6 +546,8 @@ void initServer() {
     createSharedObjects();
     //FIXME: adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+PREZ_EVENTLOOP_FDSET_INCR);
+    server.db = zmalloc(sizeof(prezDb)*server.dbnum);
+
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
@@ -531,6 +571,13 @@ void initServer() {
         prezLog(PREZ_WARNING, "Configured to not listen anywhere, exiting.");
         exit(1);
     }
+
+    /* Create the Prez databases, and initialize other internal state. */
+    for (j = 0; j < server.dbnum; j++) {
+        server.db[j].dict = dictCreate(&dbDictType,NULL);
+        server.db[j].id = j;
+    }
+    resetServerStats();
 
     /* Create the serverCron() time event, that's our main way to process
      * background operations. */
@@ -581,6 +628,7 @@ void initServerConfig() {
     server.unixsocketperm = PREZ_DEFAULT_UNIX_SOCKET_PERM;
     server.ipfd_count = 0;
     server.sofd = -1;
+    server.dbnum = PREZ_DEFAULT_DBNUM;
     server.verbosity = PREZ_DEFAULT_VERBOSITY;
     server.maxidletime = PREZ_MAXIDLETIME;
     server.tcpkeepalive = PREZ_DEFAULT_TCP_KEEPALIVE;
