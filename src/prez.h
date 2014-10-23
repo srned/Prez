@@ -164,6 +164,11 @@ typedef long long mstime_t; /* millisecond time type. */
  * that is our safety margin. */
 #define PREZ_EVENTLOOP_FDSET_INCR (PREZ_MIN_RESERVED_FDS+96)
 
+/* Command flags. Please check the command table defined in the prez.c file
+ * for more information about the meaning of every flag. */
+#define PREZ_CMD_WRITE 1                   /* "w" flag */
+#define PREZ_CMD_READONLY 2                /* "r" flag */
+
 /* Object types */
 #define PREZ_STRING 0
 #define PREZ_LIST 1
@@ -398,6 +403,7 @@ struct prezCommand {
     char *name;
     prezCommandProc *proc;
     int arity;
+    char *sflags; /* Flags as string representation, one char per flag. */
     int flags;    /* The actual flags, obtained from the 'sflags' field. */
     /* Use a function to determine keys arguments in a command line.
      * Used for prez Cluster redirect. */

@@ -64,9 +64,40 @@ struct sharedObjectsStruct shared;
 struct prezServer server;
 struct prezCommand *commandTable;
 
+/* Our command table.
+ *
+ * Every entry is composed of the following fields:
+ *
+ * name: a string representing the command name.
+ * function: pointer to the C function implementing the command.
+ * arity: number of arguments, it is possible to use -N to say >= N
+ * sflags: command flags as string. See below for a table of flags.
+ * flags: flags as bitmask. Computed by Redis using the 'sflags' field.
+ * get_keys_proc: an optional function to get key arguments from a command.
+ *                This is only used when the following three fields are not
+ *                enough to specify what arguments are keys.
+ * first_key_index: first argument that is a key
+ * last_key_index: last argument that is a key
+ * key_step: step to get all the keys from first to last argument. For instance
+ *           in MSET the step is two since arguments are key,val,key,val,...
+ * microseconds: microseconds of total execution time for this command.
+ * calls: total number of calls of this command.
+ *
+ * The flags, microseconds and calls fields are computed by Redis and should
+ * always be set to zero.
+ *
+ * Command flags are expressed using strings where every character represents
+ * a flag. Later the populateCommandTable() function will take care of
+ * populating the real 'flags' field using this characters.
+ *
+ * This is the meaning of the flags:
+ *
+ * w: write command (may modify the key space).
+ * r: read command  (will never modify the key space).
+ */
 struct prezCommand prezCommandTable[] = {
-    {"get",getCommand,2,0,NULL,1,1,1,0,0},
-    {"set",setCommand,-3,0,NULL,1,1,1,0,0}
+    {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
+    {"set",setCommand,-3,"w",0,NULL,1,1,1,0,0}
 };
 
 /* Return the UNIX time in microseconds */
@@ -318,11 +349,26 @@ void usage() {
 void setGenericCommand(prezClient *c, robj *key, robj *val) {
     setKey(&server.db[0],key,val);
     addReply(c,shared.ok);
+}
 
+int getGenericCommand(prezClient *c) {
+    robj *o;
+
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL)
+        return PREZ_OK;
+
+    if (o->type != PREZ_STRING) {
+        addReply(c,shared.wrongtypeerr);
+        return PREZ_ERR;
+    } else {
+        addReplyBulk(c,o);
+        return PREZ_OK;
+    }
 }
 
 void getCommand(prezClient *c, robj **argv, int argc) {
     prezLog(PREZ_DEBUG, "getCommand");
+    getGenericCommand(c);
 }
 
 void setCommand(prezClient *c, robj **argv, int argc) {
@@ -373,9 +419,14 @@ int processCommand(prezClient *c) {
     }
     //FIXME: cluster redirect 
 
-    clusterProcessCommand(c);
-    /* Fake ERR so that the client doesn't get reset */
-    return PREZ_ERR;
+    if (c->cmd->flags & PREZ_CMD_WRITE) {
+        clusterProcessCommand(c);
+        /* Fake ERR so that the client doesn't get reset */
+        return PREZ_ERR;
+    } else {
+        call(c);
+    }
+    return PREZ_OK;
 }
 
 static void sigtermHandler(int sig) {
@@ -607,8 +658,19 @@ void populateCommandTable(void) {
     int numcommands = sizeof(prezCommandTable)/sizeof(struct prezCommand);
 
     for (j = 0; j < numcommands; j++) {
-        int retval;
         struct prezCommand *c = prezCommandTable+j;
+        char *f = c->sflags;
+        int retval;
+
+        while(*f != '\0') {
+            switch(*f) {
+            case 'w': c->flags |= PREZ_CMD_WRITE; break;
+            case 'r': c->flags |= PREZ_CMD_READONLY; break;
+            default: prezPanic("Unsupported command flag"); break;
+            }
+            f++;
+        }
+
         retval = dictAdd(server.commands, sdsnew(c->name), c);
         prezAssert(retval == DICT_OK);
     }
