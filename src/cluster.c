@@ -390,6 +390,8 @@ void clusterProcessCommand(prezClient *c) {
     int j;
     sds cmdrepr = sdsnew("");
 
+    memset(&entry,0,sizeof(logEntry));
+
     prezLog(PREZ_DEBUG,"clusterProcessCommand");
     entry.index = logCurrentIndex()+1;
     entry.term = server.cluster->current_term;
