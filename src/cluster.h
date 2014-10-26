@@ -241,6 +241,7 @@ int logAppendEntries(clusterMsgDataAppendEntries entries);
 int logCommitIndex(long long index);
 int logSync(void);
 long long logCurrentIndex(void);
+long long logCurrentTerm(void);
 
 /* Functions as macros */
 #define quorumSize ((dictSize(server.cluster->nodes) / 2) + 1)

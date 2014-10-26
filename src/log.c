@@ -282,6 +282,7 @@ int logAppendEntries(clusterMsgDataAppendEntries entries) {
 
 int logCommitIndex(long long index) {
     int i;
+    prezClient *c;
 
     if (index > server.cluster->start_index+
             listLength(server.cluster->log_entries)) {
@@ -300,11 +301,10 @@ int logCommitIndex(long long index) {
 
         /* Process command which is what commit is really about */
         prezLog(PREZ_DEBUG,"cmd invoke");
-        if (server.cluster->state == PREZ_LEADER) {
-            prezClient *c;
-            c = dictFetchValue(server.cluster->proc_clients,
-                    sdsfromlonglong(entry->log_entry.index));
-            if(c) call(c);
+        if (server.cluster->state == PREZ_LEADER &&
+            (c = dictFetchValue(server.cluster->proc_clients,
+                    sdsfromlonglong(entry->log_entry.index)))) {
+            call(c);
             dictDelete(server.cluster->proc_clients,
                     sdsfromlonglong(entry->log_entry.index));
         } else {
@@ -362,5 +362,20 @@ long long logCurrentIndex(void) {
         return(entry->log_entry.index);
     }
     prezLog(PREZ_DEBUG,"currentIndex:0");
+    return 0;
+}
+
+long long logCurrentTerm(void) {
+    listNode *ln;
+    logEntryNode *entry;
+
+    ln = listIndex(server.cluster->log_entries, -1);
+    if (ln) {
+        entry = ln->value;
+        prezLog(PREZ_DEBUG,"currentTerm:%lld",
+                entry->log_entry.term);
+        return(entry->log_entry.term);
+    }
+    prezLog(PREZ_DEBUG,"currentTerm:0");
     return 0;
 }

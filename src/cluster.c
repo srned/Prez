@@ -174,7 +174,6 @@ void clusterInit(void) {
 
     server.cluster->last_activity_time = mstime();
 
-    // FIXME: set currentTerm from log.
     /* Load or create a new nodes configuration. */
     if (clusterLoadConfig(server.cluster_configfile) == PREZ_ERR) {
         /* No configuration found. We will just use the random name provided
@@ -216,6 +215,7 @@ void clusterInit(void) {
     else if (errno != ENOENT) {
         prezLog(PREZ_WARNING,"Fatal error loading the prez log: %s. Exiting.",strerror(errno));
     }
+    server.cluster->current_term = logCurrentTerm();
 }
 
 /* -----------------------------------------------------------------------------
