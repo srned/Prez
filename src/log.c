@@ -244,6 +244,7 @@ int logWriteEntry(logEntry e) {
     }
     
     en = zmalloc(sizeof(*en));
+    memset(en,0,sizeof(*en));
     en->log_entry.index = e.index;
     en->log_entry.term = e.term;
     memcpy(en->log_entry.commandName, e.commandName,strlen(e.commandName));

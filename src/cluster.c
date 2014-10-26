@@ -951,9 +951,9 @@ void clusterSendAppendEntries(clusterLink *link) {
             hdr->data.appendentries.entries.log_entries[logcount].index = 
                 le_node->log_entry.index;
             memcpy(hdr->data.appendentries.entries.log_entries[logcount].commandName,
-                    le_node->log_entry.commandName, PREZ_COMMAND_NAMELEN);
+                    le_node->log_entry.commandName,strlen(le_node->log_entry.commandName));
             memcpy(hdr->data.appendentries.entries.log_entries[logcount].command,
-                    le_node->log_entry.command, PREZ_COMMAND_NAMELEN);
+                    le_node->log_entry.command,strlen(le_node->log_entry.command));
             prezLog(PREZ_DEBUG,"AE term:%lld, index:%lld, cmd:%s, cmd:%s",
                     hdr->data.appendentries.entries.log_entries[logcount].term,
                     hdr->data.appendentries.entries.log_entries[logcount].index,
