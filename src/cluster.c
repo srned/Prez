@@ -801,6 +801,13 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
         if (node->last_sent_entry) {
             node->prev_log_index = node->last_sent_entry->log_entry.index;
 
+            /* Committing log index by counting replicas is done only for log
+             * index in current term and not for previous terms. This means
+             * that when all nodes are shut and restarted, then the current
+             * leader needs to receive atleast one request so that logCommitIndex
+             * can happen for the entry in current term which in turn will trigger
+             * commit for previous entries. After this, previous entries will be
+             * available for clients to query */
             if (node->last_sent_entry->log_entry.term == server.cluster->current_term) {
                 dictAdd(server.cluster->synced_nodes,
                         sdsnewlen(node->name,PREZ_CLUSTER_NAMELEN),&node_synced);
