@@ -951,7 +951,7 @@ void clusterSendAppendEntries(clusterLink *link) {
                 node->prev_log_index, listLength(server.cluster->log_entries));
         ln = listIndex(server.cluster->log_entries, 
                 node->prev_log_index-server.cluster->start_index);
-        while(ln && logcount <= server.cluster->log_max_entries_per_request) {
+        while(ln && logcount < server.cluster->log_max_entries_per_request) {
             le_node = listNodeValue(ln);
             hdr->data.appendentries.entries.log_entries[logcount].term = 
                 le_node->log_entry.term;
