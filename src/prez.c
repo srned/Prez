@@ -417,9 +417,17 @@ int processCommand(prezClient *c) {
             c->cmd->name);
         return PREZ_OK;
     }
-    //FIXME: cluster redirect 
-
     if (c->cmd->flags & PREZ_CMD_WRITE) {
+        if (server.cluster->state == PREZ_CANDIDATE) {
+            addReplySds(c,sdscatprintf(sdsempty(),
+                        "-%s\r\n","CLUSTERDOWN Leader not elected.Command not accepted"));
+            return PREZ_OK;
+        } else if (server.cluster->state == PREZ_FOLLOWER) {
+            addReplySds(c,sdscatprintf(sdsempty(),
+                        "-%s %s\r\n","ASK", server.cluster->leader));
+            return PREZ_OK;
+        }
+
         clusterProcessCommand(c);
         /* Fake ERR so that the client doesn't get reset */
         return PREZ_ERR;
