@@ -8,6 +8,8 @@ Prez is a distributed system that provides highly reliable, consistent store. It
 
 Prez is basically forked from [Redis][redis] and so you will notice number of similarities with it. Prez uses RESP (Redis Serialization Protocol) for client interaction. Hence, redis-cli utility can be used with Prez.
 
+[redis]: https://github.com/antirez/redis
+
 ### Building
 To compile prez, you can clone the repository and build,
 
@@ -51,12 +53,12 @@ like:
 ```sh
 mkdir cluster-test
 cd cluster-test
-mkdir 9000 9001 9002 9003 9004`
+mkdir 9000 9001 9002 9003 9004
 ```
 
 Create a prez.conf file inside each of the directories, from 9000 to 9004. As a template for your configuration file just use the small example above. Remember to update communication and cluster ports accordingly.  
-Also, create nodes.conf file in each of the directory with the above example.
-Now copy your prez-server executable into the cluster-test directory, and open 6 terminal tabs.
+Also, create nodes.conf file in each of the directory with the above example.  
+Now copy your prez-server executable into the cluster-test directory, and open 6 terminal tabs.  
 Start each of the instances like,
 
 ```sh
