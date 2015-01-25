@@ -712,7 +712,8 @@ void initServerConfig() {
     server.maxclients = PREZ_MAX_CLIENTS;
     server.shutdown_asap = 0;
     server.cport = PREZ_CLUSTERPORT;
-    server.cluster_configfile = zstrdup(PREZ_DEFAULT_CLUSTER_CONFIG_FILE);
+    //server.cluster_configfile = zstrdup(PREZ_DEFAULT_CLUSTER_CONFIG_FILE);
+    server.cluster_configfile = NULL;
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
 
     /* Client output buffer limits */

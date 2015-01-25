@@ -76,6 +76,11 @@ int clusterLoadConfig(char *filename) {
     char *line;
     int maxline;
 
+    if (filename == NULL) {
+        prezLog(PREZ_WARNING,
+                "Error: no cluster config file specified. Need atleast 3 nodes for prez to work\n");
+        exit(1);
+    }
     if (fp == NULL) {
         if (errno == ENOENT) {
             return PREZ_ERR;
