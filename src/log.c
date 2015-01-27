@@ -50,7 +50,8 @@ int loadLogFile(void) {
     server.cluster->log_fd = open(server.cluster->log_filename,
             O_WRONLY|O_APPEND|O_CREAT,0644);
     if (server.cluster->log_fd == -1) {
-        prezLog(PREZ_WARNING,"Prez can't open the log file: %s",strerror(errno));
+        prezLog(PREZ_WARNING,"Prez can't open the log file: %s",
+                strerror(errno));
         return PREZ_ERR;
     }
     fp = fopen(server.cluster->log_filename, "r");
@@ -61,7 +62,8 @@ int loadLogFile(void) {
     }
 
     if (fp == NULL) {
-        prezLog(PREZ_WARNING,"Fatal error: can't open log file for reading: %s",strerror(errno));
+        prezLog(PREZ_WARNING,"Fatal error: "
+                "can't open log file for reading: %s",strerror(errno));
         exit(1);
     }
 
@@ -100,10 +102,12 @@ int loadLogFile(void) {
                     if (!ok) goto readerr;
                     break;
                 case LOG_TYPE_COMMANDNAME:
-                    memcpy(entry->log_entry.commandName, argsds, sizeof(entry->log_entry.commandName));
+                    memcpy(entry->log_entry.commandName, argsds,
+                            sizeof(entry->log_entry.commandName));
                     break;
                 case LOG_TYPE_COMMAND:
-                    memcpy(entry->log_entry.command, argsds, sizeof(entry->log_entry.command));
+                    memcpy(entry->log_entry.command, argsds,
+                            sizeof(entry->log_entry.command));
                     break;
                 default:
                     goto fmterr;
@@ -120,9 +124,12 @@ int loadLogFile(void) {
 
 readerr:
     if (feof(fp)) {
-        prezLog(PREZ_WARNING,"Unexpected end of file reading the prez log file");
+        prezLog(PREZ_WARNING,
+                "Unexpected end of file reading the prez log file");
     } else {
-        prezLog(PREZ_WARNING,"Unrecoverable error reading the prez log file: %s", strerror(errno));
+        prezLog(PREZ_WARNING,
+                "Unrecoverable error reading the prez log file: %s",
+                strerror(errno));
     }
     exit(1);
 fmterr:
@@ -142,14 +149,16 @@ int logTruncate(long long index, long long term) {
         return PREZ_ERR;
     }
 
-    if (index > server.cluster->start_index + listLength(server.cluster->log_entries)) {
-        prezLog(PREZ_NOTICE, "Index doesn't exist. length:%lu index:%lld term:%lld", 
+    if (index > server.cluster->start_index +
+            listLength(server.cluster->log_entries)) {
+        prezLog(PREZ_NOTICE, "Index doesn't exist. length:%lu "
+                "index:%lld term:%lld",
                 listLength(server.cluster->log_entries), index, term);
         return PREZ_ERR;
     }
 
     if (index == server.cluster->start_index) {
-        prezLog(PREZ_DEBUG, "Clear log");
+        prezLog(PREZ_DEBUG, "logTruncate: Clear log");
         ftruncate(server.cluster->log_fd, 0);
         listRelease(server.cluster->log_entries);
         server.cluster->log_entries = listCreate();
@@ -158,7 +167,8 @@ int logTruncate(long long index, long long term) {
         entry = listNodeValue(listIndex(server.cluster->log_entries, 
                     index - server.cluster->start_index-1));
         if (entry->log_entry.term != term) {
-            prezLog(PREZ_NOTICE, "Entry at index doesn't match term. index %lld term %lld",
+            prezLog(PREZ_NOTICE, "logTruncate: Entry at index doesn't match term. "
+                    "index %lld term %lld",
                     index, term);
             return PREZ_ERR;
         }
@@ -220,7 +230,8 @@ int logWriteEntry(logEntry e) {
                     "term:%lld index:%lld, last term:%lld index:%lld",
                     e.term, e.index, en->log_entry.term, en->log_entry.index);
             return PREZ_ERR;
-        } else if (e.term == en->log_entry.term && e.index <= en->log_entry.index) {
+        } else if (e.term == en->log_entry.term &&
+                e.index <= en->log_entry.index) {
             prezLog(PREZ_NOTICE, "Cannot append entry with earlier index." 
                     "term:%lld index:%lld, last term:%lld index:%lld",
                     e.term, e.index, en->log_entry.term, en->log_entry.index);
@@ -233,7 +244,6 @@ int logWriteEntry(logEntry e) {
     argv[2] = createStringObject(e.commandName,strlen(e.commandName));
     argv[3] = createStringObject(e.command,strlen(e.command));
     buf = catLogEntry(buf, 4, argv);
-    prezLog(PREZ_DEBUG,"logWriteEntry:%s",buf);
     decrRefCount(argv[0]);
     decrRefCount(argv[1]);
     decrRefCount(argv[2]);
@@ -249,16 +259,13 @@ int logWriteEntry(logEntry e) {
     en->log_entry.term = e.term;
     memcpy(en->log_entry.commandName, e.commandName,strlen(e.commandName));
     memcpy(en->log_entry.command, e.command,strlen(e.command));
-    //memcpy(&en->log_entry,&e,sizeof(logEntry));
     en->position = server.cluster->log_current_size;
     server.cluster->log_current_size += sdslen(buf);
-    prezLog(PREZ_DEBUG,"Add to List: en term:%lld/%lld index:%lld, %lu",
+    prezLog(PREZ_DEBUG,"logWriteEntry: term:%lld/%lld index:%lld",
             en->log_entry.term,
             e.term,
-            en->log_entry.index, sizeof(en));
+            en->log_entry.index);
     listAddNodeTail(server.cluster->log_entries,en);
-    prezLog(PREZ_DEBUG,"listLength:%lu",
-            listLength(server.cluster->log_entries));
 
     return PREZ_OK;
 }
@@ -268,7 +275,6 @@ int logAppendEntries(clusterMsgDataAppendEntries entries) {
     logEntry *e;
 
     e = (logEntry*) entries.log_entries;
-    prezLog(PREZ_DEBUG,"count:%d",ntohs(entries.log_entries_count));
     for(i=0;i<ntohs(entries.log_entries_count);i++) {
         if(logWriteEntry(entries.log_entries[i])) {
             prezLog(PREZ_NOTICE, "log write error");
@@ -300,7 +306,6 @@ int logCommitIndex(long long index) {
         server.cluster->commit_index = entry->log_entry.index;
 
         /* Process command which is what commit is really about */
-        prezLog(PREZ_DEBUG,"cmd invoke");
         if (server.cluster->state == PREZ_LEADER &&
             (c = dictFetchValue(server.cluster->proc_clients,
                     sdsfromlonglong(entry->log_entry.index)))) {
@@ -322,7 +327,6 @@ int logCommitIndex(long long index) {
                 } else {
                     sdsfree(argv[i]);
                 }
-                prezLog(PREZ_DEBUG,"%s ", argv[i]);
             }
             zfree(argv);
             cmd = lookupCommand(oargv[0]->ptr);
@@ -357,11 +361,8 @@ long long logCurrentIndex(void) {
     ln = listIndex(server.cluster->log_entries, -1);
     if (ln) {
         entry = ln->value;
-        prezLog(PREZ_DEBUG,"currentIndex:%lld",
-                entry->log_entry.index);
         return(entry->log_entry.index);
     }
-    prezLog(PREZ_DEBUG,"currentIndex:0");
     return 0;
 }
 
@@ -372,10 +373,7 @@ long long logCurrentTerm(void) {
     ln = listIndex(server.cluster->log_entries, -1);
     if (ln) {
         entry = ln->value;
-        prezLog(PREZ_DEBUG,"currentTerm:%lld",
-                entry->log_entry.term);
         return(entry->log_entry.term);
     }
-    prezLog(PREZ_DEBUG,"currentTerm:0");
     return 0;
 }

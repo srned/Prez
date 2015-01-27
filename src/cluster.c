@@ -72,13 +72,13 @@ void clusterDoBeforeSleep(int flags);
  * If the configuration was loaded from the file, PREZ_OK is returned. */
 int clusterLoadConfig(char *filename) {
     FILE *fp = fopen(filename,"r");
-    //struct stat sb;
     char *line;
     int maxline;
 
     if (filename == NULL) {
         prezLog(PREZ_WARNING,
-                "Error: no cluster config file specified. Need atleast 3 nodes for prez to work\n");
+                "Error: no cluster config file specified. "
+                "Need atleast 3 nodes for prez to work");
         exit(1);
     }
     if (fp == NULL) {
@@ -104,8 +104,8 @@ int clusterLoadConfig(char *filename) {
     while(fgets(line,maxline,fp) != NULL) {
         int argc;
         sds *argv;
-        clusterNode *n;// *master;
-        char *p;// *s;
+        clusterNode *n;
+        char *p;
 
         /* Skip blank lines, they can be created either by users manually
          * editing nodes.conf or by the config writing process if stopped
@@ -126,7 +126,6 @@ int clusterLoadConfig(char *filename) {
             n->flags |= PREZ_NODE_MYSELF;
             myself = server.cluster->myself = n;
         }
-
 
         /* Address and port */
         if ((p = strchr(argv[1],':')) == NULL) goto fmterr;
@@ -155,7 +154,6 @@ void clusterInit(void) {
 
     server.cluster = zmalloc(sizeof(clusterState));
     server.cluster->myself = NULL;
-    //server.cluster->state = PREZ_CLUSTER_FAIL;
     server.cluster->size = 1;
     server.cluster->nodes = dictCreate(&clusterNodesDictType,NULL);
     server.cluster->stats_bus_messages_sent = 0;
@@ -163,7 +161,7 @@ void clusterInit(void) {
 
     server.cluster->state = PREZ_FOLLOWER;
     server.cluster->leader = sdsempty();
-    server.cluster->voted_for = sdsempty(); //FIXME: free?
+    server.cluster->voted_for = sdsempty();
     server.cluster->election_timeout = PREZ_CLUSTER_ELECTION_TIMEOUT;
     server.cluster->heartbeat_interval = PREZ_CLUSTER_HEARTBEAT_INTERVAL;
     server.cluster->synced_nodes = dictCreate(&clusterNodesDictType,NULL);
@@ -188,7 +186,6 @@ void clusterInit(void) {
         prezLog(PREZ_NOTICE,"No cluster configuration found, I'm %.40s",
             myself->name);
         clusterAddNode(myself);
-        //saveconf = 1;
     }
 
     /* We need a listening TCP port for our cluster messaging needs. */
@@ -259,8 +256,6 @@ clusterLink *createClusterLink(clusterNode *node) {
  * This function will just make sure that the original node associated
  * with this link will have the 'link' field set to NULL. */
 void freeClusterLink(clusterLink *link) {
-    //prezLog(PREZ_DEBUG, 
-     //       "Freeing clusterlink fd: %d", link->fd);
     if (link->fd != -1) {
         aeDeleteFileEvent(server.el, link->fd, AE_WRITABLE);
         aeDeleteFileEvent(server.el, link->fd, AE_READABLE);
@@ -294,7 +289,7 @@ void clusterAcceptHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         anetEnableTcpNoDelay(NULL,cfd);
 
         /* Use non-blocking I/O for cluster messages. */
-        prezLog(PREZ_VERBOSE,"Accepted cluster node %s:%d cfd:%d", cip, cport, cfd);
+        prezLog(PREZ_VERBOSE,"Accepted cluster node %s:%d", cip, cport);
         /* Create a link object we use to handle the connection.
          * It gets passed to the readable handler when data is available.
          * Initiallly the link->node pointer is set to NULL as we don't know
@@ -397,7 +392,6 @@ void clusterProcessCommand(prezClient *c) {
 
     memset(&entry,0,sizeof(logEntry));
 
-    prezLog(PREZ_DEBUG,"clusterProcessCommand");
     entry.index = logCurrentIndex()+1;
     entry.term = server.cluster->current_term;
     memcpy(entry.commandName,c->cmd->name,strlen(c->cmd->name)+1);
@@ -412,8 +406,6 @@ void clusterProcessCommand(prezClient *c) {
     }
     sdscatlen(cmdrepr,"\n",1);
     memcpy(entry.command,cmdrepr,sdslen(cmdrepr));
-    prezLog(PREZ_DEBUG,"cmdrepr:%s, command:%s",
-            cmdrepr,entry.command);
     sdsfree(cmdrepr);
 
     logWriteEntry(entry);
@@ -427,7 +419,8 @@ void clusterProcessCommand(prezClient *c) {
     if(dictSize(server.cluster->nodes) == 1) {
         commit_index = logCurrentIndex();
         logCommitIndex(commit_index);
-        prezLog(PREZ_DEBUG,"commit index: %lld", commit_index);
+        prezLog(PREZ_DEBUG,"clusterProcessCommand: cmtidx: %lld",
+                commit_index);
     } else {
         dictAdd(server.cluster->proc_clients,
                 sdsfromlonglong(entry.index),c);
@@ -440,11 +433,6 @@ int clusterProcessPacket(clusterLink *link) {
     uint16_t type = ntohs(hdr->type);
 
     server.cluster->stats_bus_messages_received++;
-    //prezLog(PREZ_DEBUG,"--- Processing packet of type %d, %lu bytes",
-    //    type, (unsigned long) totlen);
-
-    //server.cluster->last_activity_time = mstime();
-
     /* Perform sanity checks */
     if (totlen < 16) return 1; /* At least signature, version, totlen, count. */
     if (ntohs(hdr->ver) != 0) return 1; /* Can't handle versions other than 0.*/
@@ -456,9 +444,10 @@ int clusterProcessPacket(clusterLink *link) {
         explen += sizeof(clusterMsgDataRequestVote);
         if (totlen != explen) return 1;
 
-        prezLog(PREZ_DEBUG,"--- Received VoteRequest term %lld, name: %s, logindex %lld, logterm %lld",
-                hdr->data.requestvote.vote.term, 
+        prezLog(PREZ_DEBUG,"RV Recv Req: %s, term: %lld, "
+                "logidx: %lld, logterm: %lld",
                 hdr->data.requestvote.vote.candidateid,
+                hdr->data.requestvote.vote.term,
                 hdr->data.requestvote.vote.last_log_index,
                 hdr->data.requestvote.vote.last_log_term);
 
@@ -471,9 +460,10 @@ int clusterProcessPacket(clusterLink *link) {
                 sizeof(logEntry));
         if (totlen != explen) return 1;
 
-        prezLog(PREZ_DEBUG,"--- Received AppendEntries term %lld, name: %s, logindex %lld, leadercommit %lld",
-                hdr->data.appendentries.entries.term, 
+        prezLog(PREZ_DEBUG,"AE Recv Req: %s, term: %lld, "
+                "logidx: %lld, leadercmt: %lld",
                 hdr->data.appendentries.entries.leaderid,
+                hdr->data.appendentries.entries.term,
                 hdr->data.appendentries.entries.prev_log_index,
                 hdr->data.appendentries.entries.leader_commit_index);
 
@@ -484,8 +474,10 @@ int clusterProcessPacket(clusterLink *link) {
         explen += sizeof(clusterMsgDataResponseVote);
         if (totlen != explen) return 1;
 
-        prezLog(PREZ_DEBUG,"--- Received VoteResponse sender: %s, current_term %lld, term %lld, granted: %d",
-                hdr->sender, server.cluster->current_term, 
+        prezLog(PREZ_DEBUG,"RV Recv Req: %s, "
+                "currterm: %lld, term: %lld, granted: %d",
+                hdr->sender,
+                server.cluster->current_term,
                 hdr->data.responsevote.vote.term,
                 hdr->data.responsevote.vote.vote_granted);
         clusterProcessResponseVote(link, hdr->data.responsevote.vote);
@@ -495,14 +487,16 @@ int clusterProcessPacket(clusterLink *link) {
         explen += sizeof(clusterMsgDataResponseAppendEntries);
         if (totlen != explen) return 1;
 
-        prezLog(PREZ_DEBUG,"--- Received AppendEntriesResponse port:%d term %lld, index: %lld, commit_index: %lld, ok: %d",
-                link->node->port,
-                hdr->data.responseappendentries.entries.term, 
+        prezLog(PREZ_DEBUG,"AE Recv Rep: %s, "
+                "term: %lld, idx: %lld, cmtidx: %lld, ok: %d",
+                link->node->name,
+                hdr->data.responseappendentries.entries.term,
                 hdr->data.responseappendentries.entries.index,
                 hdr->data.responseappendentries.entries.commit_index,
                 hdr->data.responseappendentries.entries.ok);
 
-        clusterProcessResponseAppendEntries(link, hdr->data.responseappendentries.entries);
+        clusterProcessResponseAppendEntries(link,
+                hdr->data.responseappendentries.entries);
     }
     
     return 1;
@@ -529,7 +523,7 @@ void clusterWriteHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
 
     nwritten = write(fd, link->sndbuf, sdslen(link->sndbuf));
     if (nwritten <= 0) {
-        prezLog(PREZ_DEBUG,"I/O error writing to node link: %s",
+        prezLog(PREZ_WARNING,"I/O error writing to node link: %s",
             strerror(errno));
         handleLinkIOError(link);
         return;
@@ -644,7 +638,6 @@ void clusterBroadcastMessage(void *buf, size_t len) {
 /* Build the message header */
 void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
     int totlen = 0;
-    //uint64_t offset;
     memset(hdr,0,sizeof(*hdr));
     hdr->sig[0] = 'R';
     hdr->sig[1] = 'C';
@@ -677,12 +670,14 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
     long long last_log_index = 0, last_log_term = 0;
 
     if (vote.term < server.cluster->current_term) {
-        prezLog(PREZ_DEBUG, "Deny Vote, old term: %lld", vote.term);
+        prezLog(PREZ_DEBUG, "RV Recv Req: Deny Vote, old term: %lld",
+                vote.term);
         goto deny_vote;
     }
 
     if (vote.term > server.cluster->current_term) {
-        prezLog(PREZ_DEBUG, "update term to: %lld", vote.term);
+        prezLog(PREZ_DEBUG, "RV Recv Req: Update term to: %lld",
+                vote.term);
 
         if (server.cluster->state == PREZ_LEADER) {
             //FIXME: Stop heartbeat
@@ -693,10 +688,11 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
 
         server.cluster->current_term = vote.term;
         server.cluster->leader = sdsempty();
-        server.cluster->voted_for = sdsempty(); //FIXME: free?
+        server.cluster->voted_for = sdsempty();
     } else if (sdslen(server.cluster->voted_for) > 0 && 
             sdscmp(server.cluster->voted_for, candidateid)) {
-        prezLog(PREZ_DEBUG, "Deny Vote, Dup vote request. Already voted for %s",
+        prezLog(PREZ_DEBUG, "RV Recv Req: Deny Vote, Dup vote request."
+                "Already voted for %s",
                 server.cluster->voted_for);
         goto deny_vote;
     }
@@ -708,14 +704,15 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
         last_log_term = entry->log_entry.term;
     }
 
-    if (last_log_index > vote.last_log_index || last_log_term > vote.last_log_term) {
-        prezLog(PREZ_DEBUG, "Deny Vote. Out of date log");
+    if (last_log_index > vote.last_log_index ||
+            last_log_term > vote.last_log_term) {
+        prezLog(PREZ_DEBUG, "RV Recv Req: Deny Vote. Out of date log");
         goto deny_vote;
     }
 
     /* Vote for the candidate */
     server.cluster->voted_for = candidateid;
-    prezLog(PREZ_DEBUG, "Grant Vote for %s.", candidateid);
+    prezLog(PREZ_DEBUG, "RV Recv Req: Grant Vote for %s.", candidateid);
     clusterSendResponseVote(link, GRANT_VOTE);
     server.cluster->last_activity_time = mstime();
     return;
@@ -726,14 +723,16 @@ deny_vote:
     return;
 }
 
-void clusterProcessResponseVote(clusterLink *link, clusterMsgDataResponseVote vote) {
+void clusterProcessResponseVote(clusterLink *link,
+        clusterMsgDataResponseVote vote) {
     if (vote.vote_granted && vote.term == server.cluster->current_term) {
         server.cluster->votes_granted++;
         return;
     }
 
     if (vote.term > server.cluster->current_term) {
-        prezLog(PREZ_DEBUG, "vote failed: updating term:%lld", vote.term);
+        prezLog(PREZ_DEBUG, "RV Recv Rep: "
+                "vote failed: updating term:%lld", vote.term);
 
         if (server.cluster->state == PREZ_LEADER) {
             //FIXME: Stop heartbeat
@@ -746,7 +745,7 @@ void clusterProcessResponseVote(clusterLink *link, clusterMsgDataResponseVote vo
         server.cluster->leader = sdsempty();
         server.cluster->voted_for = sdsempty();
     } else {
-        prezLog(PREZ_DEBUG, "vote denied");
+        prezLog(PREZ_DEBUG, "RV Recv Rep: vote denied");
     }
 }
 
@@ -754,7 +753,7 @@ void clusterProcessAppendEntries(clusterLink *link,
         clusterMsgDataAppendEntries entries) {
 
     if (entries.term < server.cluster->current_term) {
-        prezLog(PREZ_DEBUG, "Out of date term");
+        prezLog(PREZ_DEBUG, "AE Recv Req: Out of date term");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
     }
@@ -764,7 +763,6 @@ void clusterProcessAppendEntries(clusterLink *link,
         if (server.cluster->state == PREZ_CANDIDATE) {
             server.cluster->state = PREZ_FOLLOWER;
         }
-
         server.cluster->leader = zstrdup(entries.leaderid);
     } else {
         server.cluster->state = PREZ_FOLLOWER;
@@ -774,19 +772,19 @@ void clusterProcessAppendEntries(clusterLink *link,
     }
 
     if (logTruncate(entries.prev_log_index, entries.prev_log_term)) {
-        prezLog(PREZ_DEBUG, "log truncate error");
+        prezLog(PREZ_DEBUG, "AE Recv Req: log truncate error");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
     }
 
     if (logAppendEntries(entries)) {
-        prezLog(PREZ_DEBUG, "log append entries error");
+        prezLog(PREZ_DEBUG, "AE Recv Req: log append entries error");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
     }
 
     if (logCommitIndex(entries.leader_commit_index)) {
-        prezLog(PREZ_DEBUG, "log commit entries error");
+        prezLog(PREZ_DEBUG, "AE Recv Req: log commit entries error");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
     }
@@ -813,9 +811,11 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
              * can happen for the entry in current term which in turn will trigger
              * commit for previous entries. After this, previous entries will be
              * available for clients to query */
-            if (node->last_sent_entry->log_entry.term == server.cluster->current_term) {
+            if (node->last_sent_entry->log_entry.term ==
+                    server.cluster->current_term) {
                 dictAdd(server.cluster->synced_nodes,
-                        sdsnewlen(node->name,PREZ_CLUSTER_NAMELEN),&node_synced);
+                        sdsnewlen(node->name,PREZ_CLUSTER_NAMELEN),
+                        &node_synced);
 
                 // Check for quorum
                 if (dictSize(server.cluster->synced_nodes) < quorumSize) {
@@ -826,28 +826,29 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
                         dictSize(server.cluster->nodes));
                 while((de = dictNext(di)) != NULL) {
                     clusterNode *cnode = dictGetVal(de);
-                    prezLog(PREZ_DEBUG,"node, port:%d, prev_index:%lld",
-                            cnode->port,cnode->prev_log_index);
                     log_indices[i++] = cnode->prev_log_index;
                 }
                 dictReleaseIterator(di);
-                qsort(log_indices,dictSize(server.cluster->nodes),sizeof(long long),
+                qsort(log_indices,dictSize(server.cluster->nodes),
+                        sizeof(long long),
                         compareIndices);
                 reverseIndices(log_indices,dictSize(server.cluster->nodes));
                 commit_index = log_indices[quorumSize-1];
-                prezLog(PREZ_DEBUG,"server commit_index:%lld, quorum commit_index:%lld",
+                prezLog(PREZ_DEBUG,"AE Recv Rep: server cmtidx:%lld,"
+                        " quorum cmtidx:%lld",
                         server.cluster->commit_index,commit_index);
                 if (commit_index > server.cluster->commit_index) {
                     logSync();
                     logCommitIndex(commit_index);
-                    prezLog(PREZ_DEBUG, "AE Response commit index: %lld", commit_index);
+                    prezLog(PREZ_DEBUG, "AE Recv Rep: cmtidx: %lld",
+                            commit_index);
                 }
                 zfree(log_indices);
             }
         }
     } else {
         if (entries.term > server.cluster->current_term) {
-            prezLog(PREZ_NOTICE, "New Leader found");
+            prezLog(PREZ_NOTICE, "AE Recv Rep: New Leader found");
             if (server.cluster->state != PREZ_FOLLOWER) {
                 server.cluster->state = PREZ_FOLLOWER;
             }
@@ -856,14 +857,16 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
             server.cluster->voted_for = sdsempty();
         } else if (entries.term == node->last_sent_term && 
                 entries.commit_index >= node->prev_log_index) {
-            prezLog(PREZ_DEBUG, "Failed to truncate or we missed previous response");
+            prezLog(PREZ_DEBUG, "AE Recv Rep: Failed to truncate or "
+                    "we missed previous response");
             node->prev_log_index = entries.commit_index;
         } else if (node->prev_log_index > 0) {
             node->prev_log_index--;
             if (node->prev_log_index > entries.index) {
                 node->prev_log_index = entries.index;
             }
-            prezLog(PREZ_DEBUG, "prev_log_index: %lld updated for %s",
+            prezLog(PREZ_DEBUG, "AE Recv Rep: "
+                    "prev_log_index: %lld updated for %s",
                     node->prev_log_index, node->name);
         }
     }
@@ -890,8 +893,8 @@ void clusterSendRequestVote(void) {
             PREZ_CLUSTER_NAMELEN);
     hdr->data.requestvote.vote.last_log_index = last_log_index;
     hdr->data.requestvote.vote.last_log_term = last_log_term;
-    prezLog(PREZ_DEBUG, "Broadcasting RequestVote term: %lld, buf:%s, sizeof(clustermsg): %lu, totlen: %d\n", 
-            server.cluster->current_term, buf, sizeof(clusterMsg), ntohl(hdr->totlen));
+    prezLog(PREZ_DEBUG, "RV Send Req: broadcast term: %lld",
+            server.cluster->current_term);
 
     clusterBroadcastMessage(buf,ntohl(hdr->totlen));
 }
@@ -901,8 +904,8 @@ void clusterSendResponseVote(clusterLink *link, int vote_granted) {
     clusterMsg *hdr = (clusterMsg*) buf;
 
     clusterBuildMessageHdr(hdr, CLUSTERMSG_TYPE_VOTEREQUEST_RESP);
-    prezLog(PREZ_DEBUG, "Sending ResponseVote buf:%s, sizeof(clustermsg): %lu, totlen: %d\n", 
-            buf, sizeof(clusterMsg), ntohl(hdr->totlen));
+    prezLog(PREZ_DEBUG, "RV Send Rep: term:%lld, granted:%d",
+            server.cluster->current_term, vote_granted);
 
     hdr->data.responsevote.vote.term = server.cluster->current_term;
     hdr->data.responsevote.vote.vote_granted = vote_granted;
@@ -918,12 +921,20 @@ void clusterSendResponseAppendEntries(clusterLink *link, int ok) {
     clusterMsg *hdr =  (clusterMsg*) buf;
 
     clusterBuildMessageHdr(hdr, CLUSTERMSG_TYPE_APPENDENTRIES_RESP);
-    prezLog(PREZ_DEBUG, "Sending AppendEntries Response buf:%s, sizeof(clustermsg): %lu, totlen: %d\n", 
-            buf, sizeof(clusterMsg), ntohl(hdr->totlen));
-    hdr->data.responseappendentries.entries.term = server.cluster->current_term;
-    hdr->data.responseappendentries.entries.index = logCurrentIndex();
-    hdr->data.responseappendentries.entries.commit_index = server.cluster->commit_index;
+    hdr->data.responseappendentries.entries.term =
+        server.cluster->current_term;
+    hdr->data.responseappendentries.entries.index =
+        logCurrentIndex();
+    hdr->data.responseappendentries.entries.commit_index =
+        server.cluster->commit_index;
     hdr->data.responseappendentries.entries.ok = ok;
+    prezLog(PREZ_DEBUG, "AE Send Rep: term:%lld, idx:%lld,"
+            " cmtidx:%lld, ok:%d",
+            hdr->data.responseappendentries.entries.term,
+            hdr->data.responseappendentries.entries.index,
+            hdr->data.responseappendentries.entries.commit_index,
+            hdr->data.responseappendentries.entries.ok);
+
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
 }
 
@@ -950,10 +961,8 @@ void clusterSendAppendEntries(clusterLink *link) {
     if (node->prev_log_index < server.cluster->start_index || 
             node->prev_log_index > (listLength(server.cluster->log_entries + 
                     server.cluster->start_index))) {
-        prezLog(PREZ_DEBUG, "skip log_entries");
+        prezLog(PREZ_DEBUG, "AE Send Req: skip log_entries");
     } else {
-        prezLog(PREZ_DEBUG,"prev_log_index:%lld listLength:%lu",
-                node->prev_log_index, listLength(server.cluster->log_entries));
         ln = listIndex(server.cluster->log_entries, 
                 node->prev_log_index-server.cluster->start_index);
         while(ln && logcount < server.cluster->log_max_entries_per_request) {
@@ -963,18 +972,17 @@ void clusterSendAppendEntries(clusterLink *link) {
             hdr->data.appendentries.entries.log_entries[logcount].index = 
                 le_node->log_entry.index;
             memcpy(hdr->data.appendentries.entries.log_entries[logcount].commandName,
-                    le_node->log_entry.commandName,strlen(le_node->log_entry.commandName));
+                    le_node->log_entry.commandName,
+                    strlen(le_node->log_entry.commandName));
             memcpy(hdr->data.appendentries.entries.log_entries[logcount].command,
-                    le_node->log_entry.command,strlen(le_node->log_entry.command));
-            prezLog(PREZ_DEBUG,"AE term:%lld, index:%lld, cmd:%s, cmd:%s",
+                    le_node->log_entry.command,
+                    strlen(le_node->log_entry.command));
+            prezLog(PREZ_DEBUG,"AE Send Req: term:%lld, idx:%lld, cmd:%s, cmd:%s",
                     hdr->data.appendentries.entries.log_entries[logcount].term,
                     hdr->data.appendentries.entries.log_entries[logcount].index,
                     hdr->data.appendentries.entries.log_entries[logcount].commandName,
                     hdr->data.appendentries.entries.log_entries[logcount].command);
 
-            /*memcpy(&(hdr->data.appendentries.entries.log_entries[logcount]),
-                    &(le_node->log_entry), sizeof(logEntry));
-            */
             ln_next = listNextNode(ln);
             logcount++;
             node->last_sent_entry = listNodeValue(ln);
@@ -989,10 +997,8 @@ void clusterSendAppendEntries(clusterLink *link) {
     totlen += (sizeof(logEntry)*logcount);
     hdr->totlen = htonl(totlen);
 
-    prezLog(PREZ_DEBUG, "Sending heartbeat to port:%d, buf:%s, sizeof(clustermsg): "
-            "%lu, totlen: %d logcount: %d\n",
-            node->port, buf, sizeof(clusterMsg), 
-            ntohl(hdr->totlen), 
+    prezLog(PREZ_DEBUG, "AE Send Req: %s, logcount: %d",
+            node->name,
             ntohs(hdr->data.appendentries.entries.log_entries_count));
 
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
@@ -1013,8 +1019,6 @@ void clusterCron(void) {
     dictIterator *di;
     dictEntry *de;
 
-    //prezLog(PREZ_DEBUG, "State: %d", server.cluster->state);
-
     /* Check if we have disconnected nodes and re-establish the connection. */
     di = dictGetSafeIterator(server.cluster->nodes);
     while((de = dictNext(di)) != NULL) {
@@ -1028,7 +1032,7 @@ void clusterCron(void) {
             fd = anetTcpNonBlockBindConnect(server.neterr, node->ip,
                     node->port+PREZ_CLUSTER_PORT_INCR, PREZ_BIND_ADDR);
             if (fd == -1) {
-                prezLog(PREZ_DEBUG, "Unable to connect to "
+                prezLog(PREZ_WARNING, "Unable to connect to "
                         "Cluster Node [%s]:%d -> %s", node->ip,
                         node->port+PREZ_CLUSTER_PORT_INCR,
                         server.neterr);
@@ -1041,7 +1045,6 @@ void clusterCron(void) {
             aeCreateFileEvent(server.el,link->fd,AE_READABLE,
                     clusterReadHandler,link);
 
-            //clusterSendAppendEntries(link);
             prezLog(PREZ_DEBUG,"Connecting with Node %.40s at %s:%d",
                     node->name, node->ip, node->port+PREZ_CLUSTER_PORT_INCR);
         }
@@ -1052,10 +1055,6 @@ void clusterCron(void) {
         random() % server.cluster->election_timeout; /* Random delay between 0 
                                                         and election_timeout ms */
 
-    /*
-       prezLog(PREZ_DEBUG,"now: %llu, last_active: %llu, election_timeout: %llu",
-       now, server.cluster->last_active_time, election_timeout);
-       */
     if (server.cluster->state != PREZ_LEADER && 
             now - server.cluster->last_activity_time > election_timeout) {
         server.cluster->last_activity_time = mstime();
@@ -1074,11 +1073,10 @@ void clusterCron(void) {
 
     /* Candidate */
     if (server.cluster->state == PREZ_CANDIDATE) {
-        //unsigned long quorum_size = (dictSize(server.cluster->nodes) / 2) + 1;
-        prezLog(PREZ_DEBUG, "nodes size: %lu, quorum_size: %lu", 
-               dictSize(server.cluster->nodes), quorumSize);
         if (server.cluster->votes_granted >= quorumSize) {
-            prezLog(PREZ_DEBUG, "Changing State to Leader");
+            prezLog(PREZ_DEBUG, "nodes/quorum: %lu/%lu, "
+                    "Changing State to Leader",
+                    dictSize(server.cluster->nodes), quorumSize);
             server.cluster->state = PREZ_LEADER;
             server.cluster->leader = zstrdup(server.name);
         }
