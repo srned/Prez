@@ -455,9 +455,13 @@ int clusterProcessPacket(clusterLink *link) {
     } else if (type == CLUSTERMSG_TYPE_APPENDENTRIES) {
         uint32_t explen;
         explen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
-        explen += (sizeof(clusterMsgDataAppendEntries) +
-                (ntohs(hdr->data.appendentries.entries.log_entries_count)-1) *
+        explen += (sizeof(clusterMsgDataAppendEntries) -
+                (sizeof(logEntry)*PREZ_LOG_MAX_ENTRIES_PER_REQUEST) +
+                (ntohs(hdr->data.appendentries.entries.log_entries_count)) *
                 sizeof(logEntry));
+        prezLog(PREZ_DEBUG,"AE Recv Req: log_count:%d, sizeof: %u",
+                ntohs(hdr->data.appendentries.entries.log_entries_count),
+                explen);
         if (totlen != explen) return 1;
 
         prezLog(PREZ_DEBUG,"AE Recv Req: %s, term: %lld, "
@@ -993,13 +997,15 @@ void clusterSendAppendEntries(clusterLink *link) {
     hdr->data.appendentries.entries.log_entries_count = htons(logcount);
 
     totlen = sizeof(clusterMsg)-sizeof(union clusterMsgData);
-    totlen += (sizeof(clusterMsgDataAppendEntries)-sizeof(logEntry));
+    totlen += (sizeof(clusterMsgDataAppendEntries) -
+            (sizeof(logEntry)*PREZ_LOG_MAX_ENTRIES_PER_REQUEST));
     totlen += (sizeof(logEntry)*logcount);
     hdr->totlen = htonl(totlen);
 
-    prezLog(PREZ_DEBUG, "AE Send Req: %s, logcount: %d",
+    prezLog(PREZ_DEBUG, "AE Send Req: %s, logcount: %d, totlen: %d",
             node->name,
-            ntohs(hdr->data.appendentries.entries.log_entries_count));
+            ntohs(hdr->data.appendentries.entries.log_entries_count),
+            totlen);
 
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
 }
@@ -1058,6 +1064,8 @@ void clusterCron(void) {
     if (server.cluster->state != PREZ_LEADER && 
             now - server.cluster->last_activity_time > election_timeout) {
         server.cluster->last_activity_time = mstime();
+        prezLog(PREZ_NOTICE, "Changing State to Candidate, term: %lld",
+                server.cluster->current_term);
 
         /* Change to Candidate State */
         server.cluster->state = PREZ_CANDIDATE;
@@ -1077,6 +1085,8 @@ void clusterCron(void) {
             prezLog(PREZ_DEBUG, "nodes/quorum: %lu/%lu, "
                     "Changing State to Leader",
                     dictSize(server.cluster->nodes), quorumSize);
+            prezLog(PREZ_NOTICE, "Changing State to Leader, term: %lld",
+                   server.cluster->current_term);
             server.cluster->state = PREZ_LEADER;
             server.cluster->leader = zstrdup(server.name);
         }

@@ -45,10 +45,10 @@
 #define PREZ_COMMAND_NAMELEN 40
 #define PREZ_COMMAND_LEN 40
 #define PREZ_CLUSTER_PORT_INCR 10000 /* Cluster port = baseport + PORT_INCR */
-#define PREZ_CLUSTER_ELECTION_TIMEOUT  5000 /* cluster election timeout of 150 ms */
-#define PREZ_CLUSTER_HEARTBEAT_INTERVAL 1500 /* cluster node heartbeat interval of 50 ms */ 
+#define PREZ_CLUSTER_ELECTION_TIMEOUT  150 /* cluster election timeout of 150 ms */
+#define PREZ_CLUSTER_HEARTBEAT_INTERVAL 10 /* cluster node heartbeat interval of 10 ms */
 #define PREZ_DEFAULT_LOG_FILENAME "prezstore.log"
-#define PREZ_LOG_MAX_ENTRIES_PER_REQUEST 10
+#define PREZ_LOG_MAX_ENTRIES_PER_REQUEST 50
 
 #define PREZ_FOLLOWER 0
 #define PREZ_CANDIDATE 1

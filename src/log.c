@@ -176,12 +176,12 @@ int logTruncate(long long index, long long term) {
         if (index < server.cluster->start_index +
                 listLength(server.cluster->log_entries)) {
             entry = listNodeValue(listIndex(server.cluster->log_entries,
-                        index - server.cluster->start_index-1));
+                        index - server.cluster->start_index));
             ftruncate(server.cluster->log_fd, entry->position);
             server.cluster->log_current_size = entry->position;
             listRewind(server.cluster->log_entries, &li);
             li.next = listIndex(server.cluster->log_entries,
-                    index - server.cluster->start_index-1);
+                    index - server.cluster->start_index);
             while ((ln = listNext(&li)) != NULL) {
                 logEntryNode *le = listNodeValue(ln);
                 listDelNode(server.cluster->log_entries,ln);
@@ -261,10 +261,11 @@ int logWriteEntry(logEntry e) {
     memcpy(en->log_entry.command, e.command,strlen(e.command));
     en->position = server.cluster->log_current_size;
     server.cluster->log_current_size += sdslen(buf);
-    prezLog(PREZ_DEBUG,"logWriteEntry: term:%lld/%lld index:%lld",
+    prezLog(PREZ_DEBUG,"logWriteEntry: term:%lld/%lld index:%lld len:%lu",
             en->log_entry.term,
             e.term,
-            en->log_entry.index);
+            en->log_entry.index,
+            listLength(server.cluster->log_entries));
     listAddNodeTail(server.cluster->log_entries,en);
 
     return PREZ_OK;
@@ -292,7 +293,7 @@ int logCommitIndex(long long index) {
 
     if (index > server.cluster->start_index+
             listLength(server.cluster->log_entries)) {
-        prezLog(PREZ_DEBUG,"commit index %lld set back to %lu",
+        prezLog(PREZ_NOTICE,"commit index %lld set back to %lu",
                 index, listLength(server.cluster->log_entries));
         index = server.cluster->start_index+
             listLength(server.cluster->log_entries);
@@ -331,12 +332,12 @@ int logCommitIndex(long long index) {
             zfree(argv);
             cmd = lookupCommand(oargv[0]->ptr);
             if (!cmd) {
-                prezLog(PREZ_DEBUG,"unknown command '%s'",
+                prezLog(PREZ_NOTICE,"unknown command '%s'",
                         (char*)oargv[0]->ptr);
                 return PREZ_OK;
             } else if ((cmd->arity > 0 && cmd->arity != argc) ||
                     (argc < -cmd->arity)) {
-                prezLog(PREZ_DEBUG,"wrong number of arguments for '%s' command",
+                prezLog(PREZ_NOTICE,"wrong number of arguments for '%s' command",
                         cmd->name);
                 return PREZ_OK;
             }

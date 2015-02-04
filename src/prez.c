@@ -372,7 +372,7 @@ void getCommand(prezClient *c, robj **argv, int argc) {
 }
 
 void setCommand(prezClient *c, robj **argv, int argc) {
-    prezLog(PREZ_DEBUG, "setCommand");
+    //prezLog(PREZ_DEBUG, "setCommand");
     if (argc != 3) addReply(c,shared.syntaxerr);
     setGenericCommand(c,argv[1],argv[2]);
 }
@@ -387,9 +387,10 @@ struct prezCommand *lookupCommand(sds name) {
 void call(prezClient *c) {
     long long start, duration;
 
+    if (!c) return;
     /* Call the command. */
     start = ustime();
-    c->cmd->proc(c,c->argv,c->argc);
+    if (c->cmd) c->cmd->proc(c,c->argv,c->argc);
     duration = ustime()-start;
     resetClient(c);
 

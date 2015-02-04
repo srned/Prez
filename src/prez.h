@@ -111,7 +111,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define prezPanic(_e) _prezPanic(#_e,__FILE__,__LINE__),_exit(1)
 
 /* Static server configuration */
-#define PREZ_DEFAULT_HZ        10      /* Time interrupt calls/sec. */
+#define PREZ_DEFAULT_HZ        100      /* Time interrupt calls/sec. */
 
 #define PREZ_MIN_HZ            1
 #define PREZ_MAX_HZ            500
