@@ -127,23 +127,27 @@ typedef struct clusterState {
     sds leader;
     sds voted_for;
     int votes_granted;
-    long long current_term;
     mstime_t election_timeout;
     mstime_t heartbeat_interval;
     mstime_t last_activity_time; /* Time of previous AppendEntries or VoteRequest */
     dict *synced_nodes;   /* Hash table of synced nodes name -> 1/0 */
     dict *proc_clients;   /* Hash table of clients in processing -> index */
 
+    // Persistent
+    long long current_term; /* Retrieved from last log entry */
+    list *log_entries;      /* list of log_entries */
+
+    // Volatile
+    long long start_index;
+    long long current_index;
+    long long commit_index;
+
     // Log Specific
     char *log_filename;
     int log_fd;
     off_t log_current_size;
-    list *log_entries; /* list of log_entries */
     long long log_max_entries_per_request;
-    long long start_index;
-    long long current_index;
-    long long commit_index;
-    
+
     int todo_before_sleep; /* Things to do in clusterBeforeSleep(). */
     long long stats_bus_messages_sent;  /* Num of msg sent via cluster bus. */
     long long stats_bus_messages_received; /* Num of msg rcvd via cluster bus.*/
