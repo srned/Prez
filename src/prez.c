@@ -97,7 +97,8 @@ struct prezCommand *commandTable;
  */
 struct prezCommand prezCommandTable[] = {
     {"get",getCommand,2,"r",0,NULL,1,1,1,0,0},
-    {"set",setCommand,-3,"w",0,NULL,1,1,1,0,0}
+    {"set",setCommand,-3,"w",0,NULL,1,1,1,0,0},
+    {"config",configCommand,-2,"art",0,NULL,0,0,0,0,0}
 };
 
 /* Return the UNIX time in microseconds */
@@ -604,7 +605,7 @@ void initServer() {
     server.clients = listCreate();
     server.clients_to_close = listCreate();
     createSharedObjects();
-    //FIXME: adjustOpenFilesLimit();
+    adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+PREZ_EVENTLOOP_FDSET_INCR);
     server.db = zmalloc(sizeof(prezDb)*server.dbnum);
 
@@ -662,6 +663,85 @@ void initServer() {
     clusterInit();
 }
 
+/* This function will try to raise the max number of open files accordingly to
+ * the configured max number of clients. It also reserves a number of file
+ * descriptors (PREZ_MIN_RESERVED_FDS) for extra operations of
+ * persistence, listening sockets, log files and so forth.
+ *
+ * If it will not be possible to set the limit accordingly to the configured
+ * max number of clients, the function will do the reverse setting
+ * server.maxclients to the value that we can actually handle. */
+void adjustOpenFilesLimit(void) {
+    rlim_t maxfiles = server.maxclients+PREZ_MIN_RESERVED_FDS;
+    struct rlimit limit;
+
+    if (getrlimit(RLIMIT_NOFILE,&limit) == -1) {
+        prezLog(PREZ_WARNING,"Unable to obtain the current NOFILE limit (%s), assuming 1024 and setting the max clients configuration accordingly.",
+            strerror(errno));
+        server.maxclients = 1024-PREZ_MIN_RESERVED_FDS;
+    } else {
+        rlim_t oldlimit = limit.rlim_cur;
+
+        /* Set the max number of files if the current limit is not enough
+         * for our needs. */
+        if (oldlimit < maxfiles) {
+            rlim_t f;
+            int setrlimit_error = 0;
+
+            /* Try to set the file limit to match 'maxfiles' or at least
+             * to the higher value supported less than maxfiles. */
+            f = maxfiles;
+            while(f > oldlimit) {
+                rlim_t decr_step = 16;
+
+                limit.rlim_cur = f;
+                limit.rlim_max = f;
+                if (setrlimit(RLIMIT_NOFILE,&limit) != -1) break;
+                setrlimit_error = errno;
+
+                /* We failed to set file limit to 'f'. Try with a
+                 * smaller limit decrementing by a few FDs per iteration. */
+                if (f < decr_step) break;
+                f -= decr_step;
+            }
+
+            /* Assume that the limit we get initially is still valid if
+             * our last try was even lower. */
+            if (f < oldlimit) f = oldlimit;
+
+            if (f != maxfiles) {
+                int old_maxclients = server.maxclients;
+                server.maxclients = f-PREZ_MIN_RESERVED_FDS;
+                if (server.maxclients < 1) {
+                    prezLog(PREZ_WARNING,"Your current 'ulimit -n' "
+                        "of %llu is not enough for Prez to start. "
+                        "Please increase your open file limit to at least "
+                        "%llu. Exiting.",
+                        (unsigned long long) oldlimit,
+                        (unsigned long long) maxfiles);
+                    exit(1);
+                }
+                prezLog(PREZ_WARNING,"You requested maxclients of %d "
+                    "requiring at least %llu max file descriptors.",
+                    old_maxclients,
+                    (unsigned long long) maxfiles);
+                prezLog(PREZ_WARNING,"Prez can't set maximum open files "
+                    "to %llu because of OS error: %s.",
+                    (unsigned long long) maxfiles, strerror(setrlimit_error));
+                prezLog(PREZ_WARNING,"Current maximum open files is %llu. "
+                    "maxclients has been reduced to %d to compensate for "
+                    "low ulimit. "
+                    "If you need higher maxclients increase 'ulimit -n'.",
+                    (unsigned long long) oldlimit, server.maxclients);
+            } else {
+                prezLog(PREZ_NOTICE,"Increased maximum number of open files "
+                    "to %llu (it was originally set to %llu).",
+                    (unsigned long long) maxfiles,
+                    (unsigned long long) oldlimit);
+            }
+        }
+    }
+}
 void populateCommandTable(void) {
     int j;
     int numcommands = sizeof(prezCommandTable)/sizeof(struct prezCommand);
@@ -675,6 +755,9 @@ void populateCommandTable(void) {
             switch(*f) {
             case 'w': c->flags |= PREZ_CMD_WRITE; break;
             case 'r': c->flags |= PREZ_CMD_READONLY; break;
+            case 'a': c->flags |= PREZ_CMD_ADMIN; break;
+            case 't': c->flags |= PREZ_CMD_STALE; break;
+
             default: prezPanic("Unsupported command flag"); break;
             }
             f++;

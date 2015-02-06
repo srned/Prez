@@ -168,6 +168,8 @@ typedef long long mstime_t; /* millisecond time type. */
  * for more information about the meaning of every flag. */
 #define PREZ_CMD_WRITE 1                   /* "w" flag */
 #define PREZ_CMD_READONLY 2                /* "r" flag */
+#define PREZ_CMD_ADMIN 16                  /* "a" flag */
+#define PREZ_CMD_STALE 1024                /* "t" flag */
 
 /* Object types */
 #define PREZ_STRING 0
@@ -553,10 +555,12 @@ void call(prezClient *c);
 int processCommand(prezClient *c);
 struct prezCommand *lookupCommand(sds name);
 void resetServerStats(void);
+void adjustOpenFilesLimit(void);
 
 /* Command Prototypes */
 void getCommand(prezClient *c, robj **argv, int argc);
 void setCommand(prezClient *c, robj **argv, int argc);
+void configCommand(prezClient *c, robj **argv, int argc);
 
 /* Cluster */
 void clusterInit(void);

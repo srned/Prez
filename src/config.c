@@ -587,6 +587,694 @@ void loadServerConfig(char *filename, char *options) {
     sdsfree(config);
 }
 
+/*-----------------------------------------------------------------------------
+ * CONFIG SET implementation
+ *----------------------------------------------------------------------------*/
+
+void configSetCommand(prezClient *c) {
+    robj *o;
+    long long ll;
+    prezAssertWithInfo(c,c->argv[2],sdsEncodedObject(c->argv[2]));
+    prezAssertWithInfo(c,c->argv[3],sdsEncodedObject(c->argv[3]));
+    o = c->argv[3];
+
+    if (!strcasecmp(c->argv[2]->ptr,"dbfilename")) {
+        if (!pathIsBaseName(o->ptr)) {
+            addReplyError(c, "dbfilename can't be a path, just a filename");
+            return;
+        }
+#if 0
+        zfree(server.rdb_filename);
+        server.rdb_filename = zstrdup(o->ptr);
+    } else if (!strcasecmp(c->argv[2]->ptr,"requirepass")) {
+        if (sdslen(o->ptr) > REDIS_AUTHPASS_MAX_LEN) goto badfmt;
+        zfree(server.requirepass);
+        server.requirepass = ((char*)o->ptr)[0] ? zstrdup(o->ptr) : NULL;
+    } else if (!strcasecmp(c->argv[2]->ptr,"masterauth")) {
+        zfree(server.masterauth);
+        server.masterauth = ((char*)o->ptr)[0] ? zstrdup(o->ptr) : NULL;
+    } else if (!strcasecmp(c->argv[2]->ptr,"maxmemory")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.maxmemory = ll;
+        if (server.maxmemory) {
+            if (server.maxmemory < zmalloc_used_memory()) {
+                prezLog(PREZ_WARNING,"WARNING: the new maxmemory value set via CONFIG SET is smaller than the current memory usage. This will result in keys eviction and/or inability to accept new write commands depending on the maxmemory-policy.");
+            }
+            freeMemoryIfNeeded();
+        }
+#endif
+    } else if (!strcasecmp(c->argv[2]->ptr,"maxclients")) {
+        int orig_value = server.maxclients;
+
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 1) goto badfmt;
+
+        /* Try to check if the OS is capable of supporting so many FDs. */
+        server.maxclients = ll;
+        if (ll > orig_value) {
+            adjustOpenFilesLimit();
+            if (server.maxclients != ll) {
+                addReplyErrorFormat(c,"The operating system is not able to handle the specified number of clients, try with %d", server.maxclients);
+                server.maxclients = orig_value;
+                return;
+            }
+            if ((unsigned int) aeGetSetSize(server.el) <
+                server.maxclients + PREZ_EVENTLOOP_FDSET_INCR)
+            {
+                if (aeResizeSetSize(server.el,
+                    server.maxclients + PREZ_EVENTLOOP_FDSET_INCR) == AE_ERR)
+                {
+                    addReplyError(c,"The event loop API used by Prez is not able to handle the specified number of clients");
+                    server.maxclients = orig_value;
+                    return;
+                }
+            }
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"hz")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.hz = ll;
+        if (server.hz < PREZ_MIN_HZ) server.hz = PREZ_MIN_HZ;
+        if (server.hz > PREZ_MAX_HZ) server.hz = PREZ_MAX_HZ;
+#if 0
+    } else if (!strcasecmp(c->argv[2]->ptr,"maxmemory-policy")) {
+        if (!strcasecmp(o->ptr,"volatile-lru")) {
+            server.maxmemory_policy = PREZ_MAXMEMORY_VOLATILE_LRU;
+        } else if (!strcasecmp(o->ptr,"volatile-random")) {
+            server.maxmemory_policy = PREZ_MAXMEMORY_VOLATILE_RANDOM;
+        } else if (!strcasecmp(o->ptr,"volatile-ttl")) {
+            server.maxmemory_policy = PREZ_MAXMEMORY_VOLATILE_TTL;
+        } else if (!strcasecmp(o->ptr,"allkeys-lru")) {
+            server.maxmemory_policy = PREZ_MAXMEMORY_ALLKEYS_LRU;
+        } else if (!strcasecmp(o->ptr,"allkeys-random")) {
+            server.maxmemory_policy = PREZ_MAXMEMORY_ALLKEYS_RANDOM;
+        } else if (!strcasecmp(o->ptr,"noeviction")) {
+            server.maxmemory_policy = PREZ_MAXMEMORY_NO_EVICTION;
+        } else {
+            goto badfmt;
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"maxmemory-samples")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll <= 0) goto badfmt;
+        server.maxmemory_samples = ll;
+#endif
+    } else if (!strcasecmp(c->argv[2]->ptr,"timeout")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0 || ll > LONG_MAX) goto badfmt;
+        server.maxidletime = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"tcp-keepalive")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0 || ll > INT_MAX) goto badfmt;
+        server.tcpkeepalive = ll;
+#if 0
+    } else if (!strcasecmp(c->argv[2]->ptr,"appendfsync")) {
+        if (!strcasecmp(o->ptr,"no")) {
+            server.aof_fsync = AOF_FSYNC_NO;
+        } else if (!strcasecmp(o->ptr,"everysec")) {
+            server.aof_fsync = AOF_FSYNC_EVERYSEC;
+        } else if (!strcasecmp(o->ptr,"always")) {
+            server.aof_fsync = AOF_FSYNC_ALWAYS;
+        } else {
+            goto badfmt;
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"no-appendfsync-on-rewrite")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.aof_no_fsync_on_rewrite = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"appendonly")) {
+        int enable = yesnotoi(o->ptr);
+
+        if (enable == -1) goto badfmt;
+        if (enable == 0 && server.aof_state != PREZ_AOF_OFF) {
+            stopAppendOnly();
+        } else if (enable && server.aof_state == PREZ_AOF_OFF) {
+            if (startAppendOnly() == PREZ_ERR) {
+                addReplyError(c,
+                    "Unable to turn on AOF. Check server logs.");
+                return;
+            }
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"auto-aof-rewrite-percentage")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.aof_rewrite_perc = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"auto-aof-rewrite-min-size")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.aof_rewrite_min_size = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"aof-rewrite-incremental-fsync")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.aof_rewrite_incremental_fsync = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"aof-load-truncated")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.aof_load_truncated = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"save")) {
+        int vlen, j;
+        sds *v = sdssplitlen(o->ptr,sdslen(o->ptr)," ",1,&vlen);
+
+        /* Perform sanity check before setting the new config:
+         * - Even number of args
+         * - Seconds >= 1, changes >= 0 */
+        if (vlen & 1) {
+            sdsfreesplitres(v,vlen);
+            goto badfmt;
+        }
+        for (j = 0; j < vlen; j++) {
+            char *eptr;
+            long val;
+
+            val = strtoll(v[j], &eptr, 10);
+            if (eptr[0] != '\0' ||
+                ((j & 1) == 0 && val < 1) ||
+                ((j & 1) == 1 && val < 0)) {
+                sdsfreesplitres(v,vlen);
+                goto badfmt;
+            }
+        }
+        /* Finally set the new config */
+        resetServerSaveParams();
+        for (j = 0; j < vlen; j += 2) {
+            time_t seconds;
+            int changes;
+
+            seconds = strtoll(v[j],NULL,10);
+            changes = strtoll(v[j+1],NULL,10);
+            appendServerSaveParams(seconds, changes);
+        }
+        sdsfreesplitres(v,vlen);
+    } else if (!strcasecmp(c->argv[2]->ptr,"slave-serve-stale-data")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.repl_serve_stale_data = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"slave-read-only")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.repl_slave_ro = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"dir")) {
+        if (chdir((char*)o->ptr) == -1) {
+            addReplyErrorFormat(c,"Changing directory: %s", strerror(errno));
+            return;
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"hash-max-ziplist-entries")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.hash_max_ziplist_entries = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"hash-max-ziplist-value")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.hash_max_ziplist_value = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"list-max-ziplist-entries")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.list_max_ziplist_entries = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"list-max-ziplist-value")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.list_max_ziplist_value = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"set-max-intset-entries")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.set_max_intset_entries = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"zset-max-ziplist-entries")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.zset_max_ziplist_entries = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"zset-max-ziplist-value")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.zset_max_ziplist_value = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"hll-sparse-max-bytes")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.hll_sparse_max_bytes = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"lua-time-limit")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.lua_time_limit = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"slowlog-log-slower-than")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR) goto badfmt;
+        server.slowlog_log_slower_than = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"slowlog-max-len")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.slowlog_max_len = (unsigned)ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"latency-monitor-threshold")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.latency_monitor_threshold = ll;
+#endif
+    } else if (!strcasecmp(c->argv[2]->ptr,"loglevel")) {
+        if (!strcasecmp(o->ptr,"warning")) {
+            server.verbosity = PREZ_WARNING;
+        } else if (!strcasecmp(o->ptr,"notice")) {
+            server.verbosity = PREZ_NOTICE;
+        } else if (!strcasecmp(o->ptr,"verbose")) {
+            server.verbosity = PREZ_VERBOSE;
+        } else if (!strcasecmp(o->ptr,"debug")) {
+            server.verbosity = PREZ_DEBUG;
+        } else {
+            goto badfmt;
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"client-output-buffer-limit")) {
+        int vlen, j;
+        sds *v = sdssplitlen(o->ptr,sdslen(o->ptr)," ",1,&vlen);
+
+        /* We need a multiple of 4: <class> <hard> <soft> <soft_seconds> */
+        if (vlen % 4) {
+            sdsfreesplitres(v,vlen);
+            goto badfmt;
+        }
+
+        /* Sanity check of single arguments, so that we either refuse the
+         * whole configuration string or accept it all, even if a single
+         * error in a single client class is present. */
+        for (j = 0; j < vlen; j++) {
+            char *eptr;
+            long val;
+
+            if ((j % 4) == 0) {
+                if (getClientTypeByName(v[j]) == -1) {
+                    sdsfreesplitres(v,vlen);
+                    goto badfmt;
+                }
+            } else {
+                val = strtoll(v[j], &eptr, 10);
+                if (eptr[0] != '\0' || val < 0) {
+                    sdsfreesplitres(v,vlen);
+                    goto badfmt;
+                }
+            }
+        }
+        /* Finally set the new config */
+        for (j = 0; j < vlen; j += 4) {
+            int class;
+            unsigned long long hard, soft;
+            int soft_seconds;
+
+            class = getClientTypeByName(v[j]);
+            hard = strtoll(v[j+1],NULL,10);
+            soft = strtoll(v[j+2],NULL,10);
+            soft_seconds = strtoll(v[j+3],NULL,10);
+
+            server.client_obuf_limits[class].hard_limit_bytes = hard;
+            server.client_obuf_limits[class].soft_limit_bytes = soft;
+            server.client_obuf_limits[class].soft_limit_seconds = soft_seconds;
+        }
+        sdsfreesplitres(v,vlen);
+#if 0
+    } else if (!strcasecmp(c->argv[2]->ptr,"stop-writes-on-bgsave-error")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.stop_writes_on_bgsave_err = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-ping-slave-period")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll <= 0) goto badfmt;
+        server.repl_ping_slave_period = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-timeout")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll <= 0) goto badfmt;
+        server.repl_timeout = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-backlog-size")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll <= 0) goto badfmt;
+        resizeReplicationBacklog(ll);
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-backlog-ttl")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        server.repl_backlog_time_limit = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"watchdog-period")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR || ll < 0) goto badfmt;
+        if (ll)
+            enableWatchdog(ll);
+        else
+            disableWatchdog();
+    } else if (!strcasecmp(c->argv[2]->ptr,"rdbcompression")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.rdb_compression = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"notify-keyspace-events")) {
+        int flags = keyspaceEventsStringToFlags(o->ptr);
+
+        if (flags == -1) goto badfmt;
+        server.notify_keyspace_events = flags;
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-disable-tcp-nodelay")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.repl_disable_tcp_nodelay = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-diskless-sync")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.repl_diskless_sync = yn;
+    } else if (!strcasecmp(c->argv[2]->ptr,"repl-diskless-sync-delay")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.repl_diskless_sync_delay = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"slave-priority")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.slave_priority = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"min-slaves-to-write")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.repl_min_slaves_to_write = ll;
+        refreshGoodSlavesCount();
+    } else if (!strcasecmp(c->argv[2]->ptr,"min-slaves-max-lag")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.repl_min_slaves_max_lag = ll;
+        refreshGoodSlavesCount();
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-require-full-coverage")) {
+        int yn = yesnotoi(o->ptr);
+
+        if (yn == -1) goto badfmt;
+        server.cluster_require_full_coverage = yn;
+#endif
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-node-timeout")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll <= 0) goto badfmt;
+        server.cluster_node_timeout = ll;
+#if 0
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-migration-barrier")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.cluster_migration_barrier = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-slave-validity-factor")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll < 0) goto badfmt;
+        server.cluster_slave_validity_factor = ll;
+#endif
+    } else {
+        addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
+            (char*)c->argv[2]->ptr);
+        return;
+    }
+    addReply(c,shared.ok);
+    return;
+
+badfmt: /* Bad format errors */
+    addReplyErrorFormat(c,"Invalid argument '%s' for CONFIG SET '%s'",
+            (char*)o->ptr,
+            (char*)c->argv[2]->ptr);
+}
+
+/*-----------------------------------------------------------------------------
+ * CONFIG GET implementation
+ *----------------------------------------------------------------------------*/
+
+#define config_get_string_field(_name,_var) do { \
+    if (stringmatch(pattern,_name,0)) { \
+        addReplyBulkCString(c,_name); \
+        addReplyBulkCString(c,_var ? _var : ""); \
+        matches++; \
+    } \
+} while(0);
+
+#define config_get_bool_field(_name,_var) do { \
+    if (stringmatch(pattern,_name,0)) { \
+        addReplyBulkCString(c,_name); \
+        addReplyBulkCString(c,_var ? "yes" : "no"); \
+        matches++; \
+    } \
+} while(0);
+
+#define config_get_numerical_field(_name,_var) do { \
+    if (stringmatch(pattern,_name,0)) { \
+        ll2string(buf,sizeof(buf),_var); \
+        addReplyBulkCString(c,_name); \
+        addReplyBulkCString(c,buf); \
+        matches++; \
+    } \
+} while(0);
+
+void configGetCommand(prezClient *c) {
+    robj *o = c->argv[2];
+    void *replylen = addDeferredMultiBulkLength(c);
+    char *pattern = o->ptr;
+    char buf[128];
+    int matches = 0;
+    prezAssertWithInfo(c,o,sdsEncodedObject(o));
+
+    /* String values */
+#if 0
+    config_get_string_field("dbfilename",server.rdb_filename);
+    config_get_string_field("requirepass",server.requirepass);
+    config_get_string_field("masterauth",server.masterauth);
+#endif
+    config_get_string_field("unixsocket",server.unixsocket);
+    config_get_string_field("logfile",server.logfile);
+    config_get_string_field("pidfile",server.pidfile);
+
+    /* Numerical values */
+#if 0
+    config_get_numerical_field("maxmemory",server.maxmemory);
+    config_get_numerical_field("maxmemory-samples",server.maxmemory_samples);
+#endif
+    config_get_numerical_field("timeout",server.maxidletime);
+    config_get_numerical_field("tcp-keepalive",server.tcpkeepalive);
+#if 0
+    config_get_numerical_field("auto-aof-rewrite-percentage",
+            server.aof_rewrite_perc);
+    config_get_numerical_field("auto-aof-rewrite-min-size",
+            server.aof_rewrite_min_size);
+    config_get_numerical_field("hash-max-ziplist-entries",
+            server.hash_max_ziplist_entries);
+    config_get_numerical_field("hash-max-ziplist-value",
+            server.hash_max_ziplist_value);
+    config_get_numerical_field("list-max-ziplist-entries",
+            server.list_max_ziplist_entries);
+    config_get_numerical_field("list-max-ziplist-value",
+            server.list_max_ziplist_value);
+    config_get_numerical_field("set-max-intset-entries",
+            server.set_max_intset_entries);
+    config_get_numerical_field("zset-max-ziplist-entries",
+            server.zset_max_ziplist_entries);
+    config_get_numerical_field("zset-max-ziplist-value",
+            server.zset_max_ziplist_value);
+    config_get_numerical_field("hll-sparse-max-bytes",
+            server.hll_sparse_max_bytes);
+    config_get_numerical_field("lua-time-limit",server.lua_time_limit);
+    config_get_numerical_field("slowlog-log-slower-than",
+            server.slowlog_log_slower_than);
+    config_get_numerical_field("latency-monitor-threshold",
+            server.latency_monitor_threshold);
+    config_get_numerical_field("slowlog-max-len",
+            server.slowlog_max_len);
+#endif
+    config_get_numerical_field("port",server.port);
+    config_get_numerical_field("tcp-backlog",server.tcp_backlog);
+#if 0
+    config_get_numerical_field("databases",server.dbnum);
+    config_get_numerical_field("repl-ping-slave-period",server.repl_ping_slave_period);
+    config_get_numerical_field("repl-timeout",server.repl_timeout);
+    config_get_numerical_field("repl-backlog-size",server.repl_backlog_size);
+    config_get_numerical_field("repl-backlog-ttl",server.repl_backlog_time_limit);
+#endif
+    config_get_numerical_field("maxclients",server.maxclients);
+#if 0
+    config_get_numerical_field("watchdog-period",server.watchdog_period);
+    config_get_numerical_field("slave-priority",server.slave_priority);
+    config_get_numerical_field("min-slaves-to-write",server.repl_min_slaves_to_write);
+    config_get_numerical_field("min-slaves-max-lag",server.repl_min_slaves_max_lag);
+#endif
+    config_get_numerical_field("hz",server.hz);
+    config_get_numerical_field("cluster-node-timeout",server.cluster_node_timeout);
+#if 0
+    config_get_numerical_field("cluster-migration-barrier",server.cluster_migration_barrier);
+    config_get_numerical_field("cluster-slave-validity-factor",server.cluster_slave_validity_factor);
+    config_get_numerical_field("repl-diskless-sync-delay",server.repl_diskless_sync_delay);
+
+    /* Bool (yes/no) values */
+    config_get_bool_field("cluster-require-full-coverage",
+            server.cluster_require_full_coverage);
+    config_get_bool_field("no-appendfsync-on-rewrite",
+            server.aof_no_fsync_on_rewrite);
+    config_get_bool_field("slave-serve-stale-data",
+            server.repl_serve_stale_data);
+    config_get_bool_field("slave-read-only",
+            server.repl_slave_ro);
+    config_get_bool_field("stop-writes-on-bgsave-error",
+            server.stop_writes_on_bgsave_err);
+    config_get_bool_field("daemonize", server.daemonize);
+    config_get_bool_field("rdbcompression", server.rdb_compression);
+    config_get_bool_field("rdbchecksum", server.rdb_checksum);
+    config_get_bool_field("activerehashing", server.activerehashing);
+    config_get_bool_field("repl-disable-tcp-nodelay",
+            server.repl_disable_tcp_nodelay);
+    config_get_bool_field("repl-diskless-sync",
+            server.repl_diskless_sync);
+    config_get_bool_field("aof-rewrite-incremental-fsync",
+            server.aof_rewrite_incremental_fsync);
+    config_get_bool_field("aof-load-truncated",
+            server.aof_load_truncated);
+
+    /* Everything we can't handle with macros follows. */
+
+    if (stringmatch(pattern,"appendonly",0)) {
+        addReplyBulkCString(c,"appendonly");
+        addReplyBulkCString(c,server.aof_state == PREZ_AOF_OFF ? "no" : "yes");
+        matches++;
+    }
+    if (stringmatch(pattern,"dir",0)) {
+        char buf[1024];
+
+        if (getcwd(buf,sizeof(buf)) == NULL)
+            buf[0] = '\0';
+
+        addReplyBulkCString(c,"dir");
+        addReplyBulkCString(c,buf);
+        matches++;
+    }
+    if (stringmatch(pattern,"maxmemory-policy",0)) {
+        char *s;
+
+        switch(server.maxmemory_policy) {
+        case PREZ_MAXMEMORY_VOLATILE_LRU: s = "volatile-lru"; break;
+        case PREZ_MAXMEMORY_VOLATILE_TTL: s = "volatile-ttl"; break;
+        case PREZ_MAXMEMORY_VOLATILE_RANDOM: s = "volatile-random"; break;
+        case PREZ_MAXMEMORY_ALLKEYS_LRU: s = "allkeys-lru"; break;
+        case PREZ_MAXMEMORY_ALLKEYS_RANDOM: s = "allkeys-random"; break;
+        case PREZ_MAXMEMORY_NO_EVICTION: s = "noeviction"; break;
+        default: s = "unknown"; break; /* too harmless to panic */
+        }
+        addReplyBulkCString(c,"maxmemory-policy");
+        addReplyBulkCString(c,s);
+        matches++;
+    }
+    if (stringmatch(pattern,"appendfsync",0)) {
+        char *policy;
+
+        switch(server.aof_fsync) {
+        case AOF_FSYNC_NO: policy = "no"; break;
+        case AOF_FSYNC_EVERYSEC: policy = "everysec"; break;
+        case AOF_FSYNC_ALWAYS: policy = "always"; break;
+        default: policy = "unknown"; break; /* too harmless to panic */
+        }
+        addReplyBulkCString(c,"appendfsync");
+        addReplyBulkCString(c,policy);
+        matches++;
+    }
+    if (stringmatch(pattern,"save",0)) {
+        sds buf = sdsempty();
+        int j;
+
+        for (j = 0; j < server.saveparamslen; j++) {
+            buf = sdscatprintf(buf,"%jd %d",
+                    (intmax_t)server.saveparams[j].seconds,
+                    server.saveparams[j].changes);
+            if (j != server.saveparamslen-1)
+                buf = sdscatlen(buf," ",1);
+        }
+        addReplyBulkCString(c,"save");
+        addReplyBulkCString(c,buf);
+        sdsfree(buf);
+        matches++;
+    }
+#endif
+    if (stringmatch(pattern,"loglevel",0)) {
+        char *s;
+
+        switch(server.verbosity) {
+        case PREZ_WARNING: s = "warning"; break;
+        case PREZ_VERBOSE: s = "verbose"; break;
+        case PREZ_NOTICE: s = "notice"; break;
+        case PREZ_DEBUG: s = "debug"; break;
+        default: s = "unknown"; break; /* too harmless to panic */
+        }
+        addReplyBulkCString(c,"loglevel");
+        addReplyBulkCString(c,s);
+        matches++;
+    }
+    if (stringmatch(pattern,"client-output-buffer-limit",0)) {
+        sds buf = sdsempty();
+        int j;
+
+        for (j = 0; j < PREZ_CLIENT_TYPE_COUNT; j++) {
+            buf = sdscatprintf(buf,"%s %llu %llu %ld",
+                    getClientTypeName(j),
+                    server.client_obuf_limits[j].hard_limit_bytes,
+                    server.client_obuf_limits[j].soft_limit_bytes,
+                    (long) server.client_obuf_limits[j].soft_limit_seconds);
+            if (j != PREZ_CLIENT_TYPE_COUNT-1)
+                buf = sdscatlen(buf," ",1);
+        }
+        addReplyBulkCString(c,"client-output-buffer-limit");
+        addReplyBulkCString(c,buf);
+        sdsfree(buf);
+        matches++;
+    }
+    if (stringmatch(pattern,"unixsocketperm",0)) {
+        char buf[32];
+        snprintf(buf,sizeof(buf),"%o",server.unixsocketperm);
+        addReplyBulkCString(c,"unixsocketperm");
+        addReplyBulkCString(c,buf);
+        matches++;
+    }
+#if 0
+    if (stringmatch(pattern,"slaveof",0)) {
+        char buf[256];
+
+        addReplyBulkCString(c,"slaveof");
+        if (server.masterhost)
+            snprintf(buf,sizeof(buf),"%s %d",
+                server.masterhost, server.masterport);
+        else
+            buf[0] = '\0';
+        addReplyBulkCString(c,buf);
+        matches++;
+    }
+    if (stringmatch(pattern,"notify-keyspace-events",0)) {
+        robj *flagsobj = createObject(PREZ_STRING,
+            keyspaceEventsFlagsToString(server.notify_keyspace_events));
+
+        addReplyBulkCString(c,"notify-keyspace-events");
+        addReplyBulk(c,flagsobj);
+        decrRefCount(flagsobj);
+        matches++;
+    }
+    if (stringmatch(pattern,"bind",0)) {
+        sds aux = sdsjoin(server.bindaddr,server.bindaddr_count," ");
+
+        addReplyBulkCString(c,"bind");
+        addReplyBulkCString(c,aux);
+        sdsfree(aux);
+        matches++;
+    }
+#endif
+    setDeferredMultiBulkLength(c,replylen,matches*2);
+}
 
 
+/*-----------------------------------------------------------------------------
+ * CONFIG command entry point
+ *----------------------------------------------------------------------------*/
 
+void configCommand(prezClient *c, robj **argv, int argc) {
+    if (!strcasecmp(c->argv[1]->ptr,"set")) {
+        if (c->argc != 4) goto badarity;
+        configSetCommand(c);
+    } else if (!strcasecmp(c->argv[1]->ptr,"get")) {
+        if (c->argc != 3) goto badarity;
+        configGetCommand(c);
+    } else if (!strcasecmp(c->argv[1]->ptr,"resetstat")) {
+        if (c->argc != 2) goto badarity;
+        resetServerStats();
+        //resetCommandTableStats();
+        addReply(c,shared.ok);
+#if 0
+    } else if (!strcasecmp(c->argv[1]->ptr,"rewrite")) {
+        if (c->argc != 2) goto badarity;
+        if (server.configfile == NULL) {
+            addReplyError(c,"The server is running without a config file");
+            return;
+        }
+        if (rewriteConfig(server.configfile) == -1) {
+            redisLog(REDIS_WARNING,"CONFIG REWRITE failed: %s", strerror(errno));
+            addReplyErrorFormat(c,"Rewriting config file: %s", strerror(errno));
+        } else {
+            redisLog(REDIS_WARNING,"CONFIG REWRITE executed with success.");
+            addReply(c,shared.ok);
+        }
+#endif
+    } else {
+        addReplyError(c,
+            "CONFIG subcommand must be one of GET, SET, RESETSTAT, REWRITE");
+    }
+    return;
+
+badarity:
+    addReplyErrorFormat(c,"Wrong number of arguments for CONFIG %s",
+        (char*) c->argv[1]->ptr);
+}
