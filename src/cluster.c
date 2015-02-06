@@ -167,9 +167,9 @@ void clusterInit(void) {
     server.cluster->synced_nodes = dictCreate(&clusterNodesDictType,NULL);
     server.cluster->proc_clients = dictCreate(&clusterProcClientsDictType,NULL);
 
-    server.cluster->start_index = 0;
     server.cluster->current_term = 0;
     server.cluster->commit_index = 0;
+    server.cluster->last_applied = 0;
     server.cluster->votes_granted = 0;
     server.cluster->log_filename = zstrdup(PREZ_DEFAULT_LOG_FILENAME);
     server.cluster->log_entries = listCreate();
@@ -395,10 +395,8 @@ void clusterProcessCommand(prezClient *c) {
     entry.index = logCurrentIndex()+1;
     entry.term = server.cluster->current_term;
     memcpy(entry.commandName,c->cmd->name,strlen(c->cmd->name)+1);
-    //memcpy(entry.command,c->cmd->name,strlen(c->cmd->name)+1);
 
     for (j=0;j<c->argc;j++) {
-        //FIXME: Assume obj is sds
         cmdrepr = sdscatprintf(cmdrepr,(char*)c->argv[j]->ptr,
                 sdslen(c->argv[j]->ptr));
         if (j != c->argc-1)
@@ -409,12 +407,7 @@ void clusterProcessCommand(prezClient *c) {
     sdsfree(cmdrepr);
 
     logWriteEntry(entry);
-    //FIXME: Reset synced_nodes?
-
-    dictAdd(server.cluster->synced_nodes,
-            sdsnewlen(myself->name,PREZ_CLUSTER_NAMELEN),&node_synced);
-    myself->prev_log_index = entry.index;
-    myself->prev_log_term = entry.term;
+    logSync();
 
     if(dictSize(server.cluster->nodes) == 1) {
         commit_index = logCurrentIndex();
@@ -668,10 +661,7 @@ void clusterBuildMessageHdr(clusterMsg *hdr, int type) {
 
 void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote) {
     sds candidateid = sdsnew(vote.candidateid);
-    logEntryNode *entry;
-    listNode *ln;
-
-    long long last_log_index = 0, last_log_term = 0;
+    long long last_log_index, last_log_term;
 
     if (vote.term < server.cluster->current_term) {
         prezLog(PREZ_DEBUG, "RV Recv Req: Deny Vote, old term: %lld",
@@ -682,14 +672,7 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
     if (vote.term > server.cluster->current_term) {
         prezLog(PREZ_DEBUG, "RV Recv Req: Update term to: %lld",
                 vote.term);
-
-        if (server.cluster->state == PREZ_LEADER) {
-            //FIXME: Stop heartbeat
-        }
-        if (server.cluster->state != PREZ_FOLLOWER) {
-            server.cluster->state = PREZ_FOLLOWER;
-        }
-
+        server.cluster->state = PREZ_FOLLOWER;
         server.cluster->current_term = vote.term;
         server.cluster->leader = sdsempty();
         server.cluster->voted_for = sdsempty();
@@ -701,13 +684,8 @@ void clusterProcessRequestVote(clusterLink *link, clusterMsgDataRequestVote vote
         goto deny_vote;
     }
 
-    ln = listIndex(server.cluster->log_entries, -1);
-    if (ln) {
-        entry = ln->value;
-        last_log_index = entry->log_entry.index;
-        last_log_term = entry->log_entry.term;
-    }
-
+    last_log_index = logCurrentIndex();
+    last_log_term = logCurrentTerm();
     if (last_log_index > vote.last_log_index ||
             last_log_term > vote.last_log_term) {
         prezLog(PREZ_DEBUG, "RV Recv Req: Deny Vote. Out of date log");
@@ -729,6 +707,7 @@ deny_vote:
 
 void clusterProcessResponseVote(clusterLink *link,
         clusterMsgDataResponseVote vote) {
+
     if (vote.vote_granted && vote.term == server.cluster->current_term) {
         server.cluster->votes_granted++;
         return;
@@ -737,14 +716,7 @@ void clusterProcessResponseVote(clusterLink *link,
     if (vote.term > server.cluster->current_term) {
         prezLog(PREZ_DEBUG, "RV Recv Rep: "
                 "vote failed: updating term:%lld", vote.term);
-
-        if (server.cluster->state == PREZ_LEADER) {
-            //FIXME: Stop heartbeat
-        }
-        if (server.cluster->state != PREZ_FOLLOWER) {
-            server.cluster->state = PREZ_FOLLOWER;
-        }
-
+        server.cluster->state = PREZ_FOLLOWER;
         server.cluster->current_term = vote.term;
         server.cluster->leader = sdsempty();
         server.cluster->voted_for = sdsempty();
@@ -775,8 +747,8 @@ void clusterProcessAppendEntries(clusterLink *link,
         server.cluster->voted_for = sdsempty();
     }
 
-    if (logTruncate(entries.prev_log_index, entries.prev_log_term)) {
-        prezLog(PREZ_DEBUG, "AE Recv Req: log truncate error");
+    if (logVerifyAppend(entries.prev_log_index, entries.prev_log_term)) {
+        prezLog(PREZ_DEBUG, "AE Recv Req: log verify error");
         clusterSendResponseAppendEntries(link, PREZ_ERR);
         return;
     }
@@ -799,79 +771,24 @@ void clusterProcessAppendEntries(clusterLink *link,
 void clusterProcessResponseAppendEntries(clusterLink *link, 
         clusterMsgDataResponseAppendEntries entries) {
     clusterNode *node = link->node;
-    dictIterator *di;
-    dictEntry *de;
-    long long commit_index, *log_indices;
-    int i=0;
 
     if (entries.ok == PREZ_OK) {
         if (node->last_sent_entry) {
-            node->prev_log_index = node->last_sent_entry->log_entry.index;
-
-            /* Committing log index by counting replicas is done only for log
-             * index in current term and not for previous terms. This means
-             * that when all nodes are shut and restarted, then the current
-             * leader needs to receive atleast one request so that logCommitIndex
-             * can happen for the entry in current term which in turn will trigger
-             * commit for previous entries. After this, previous entries will be
-             * available for clients to query */
-            if (node->last_sent_entry->log_entry.term ==
-                    server.cluster->current_term) {
-                dictAdd(server.cluster->synced_nodes,
-                        sdsnewlen(node->name,PREZ_CLUSTER_NAMELEN),
-                        &node_synced);
-
-                // Check for quorum
-                if (dictSize(server.cluster->synced_nodes) < quorumSize) {
-                    return;
-                }
-                di = dictGetSafeIterator(server.cluster->nodes);
-                log_indices = zmalloc(sizeof(long long)*
-                        dictSize(server.cluster->nodes));
-                while((de = dictNext(di)) != NULL) {
-                    clusterNode *cnode = dictGetVal(de);
-                    log_indices[i++] = cnode->prev_log_index;
-                }
-                dictReleaseIterator(di);
-                qsort(log_indices,dictSize(server.cluster->nodes),
-                        sizeof(long long),
-                        compareIndices);
-                reverseIndices(log_indices,dictSize(server.cluster->nodes));
-                commit_index = log_indices[quorumSize-1];
-                prezLog(PREZ_DEBUG,"AE Recv Rep: server cmtidx:%lld,"
-                        " quorum cmtidx:%lld",
-                        server.cluster->commit_index,commit_index);
-                if (commit_index > server.cluster->commit_index) {
-                    logSync();
-                    logCommitIndex(commit_index);
-                    prezLog(PREZ_DEBUG, "AE Recv Rep: cmtidx: %lld",
-                            commit_index);
-                }
-                zfree(log_indices);
-            }
+            node->next_index = node->last_sent_entry->log_entry.index+1;
+            node->match_index = node->last_sent_entry->log_entry.index;
         }
     } else {
         if (entries.term > server.cluster->current_term) {
             prezLog(PREZ_NOTICE, "AE Recv Rep: New Leader found");
-            if (server.cluster->state != PREZ_FOLLOWER) {
-                server.cluster->state = PREZ_FOLLOWER;
-            }
+            server.cluster->state = PREZ_FOLLOWER;
             server.cluster->current_term = entries.term;
             server.cluster->leader = sdsempty();
             server.cluster->voted_for = sdsempty();
-        } else if (entries.term == node->last_sent_term && 
-                entries.commit_index >= node->prev_log_index) {
-            prezLog(PREZ_DEBUG, "AE Recv Rep: Failed to truncate or "
-                    "we missed previous response");
-            node->prev_log_index = entries.commit_index;
-        } else if (node->prev_log_index > 0) {
-            node->prev_log_index--;
-            if (node->prev_log_index > entries.index) {
-                node->prev_log_index = entries.index;
-            }
+        } else {
+            node->next_index--;
             prezLog(PREZ_DEBUG, "AE Recv Rep: "
-                    "prev_log_index: %lld updated for %s",
-                    node->prev_log_index, node->name);
+                    "next_index--: %lld updated for %s",
+                    node->next_index, node->name);
         }
     }
 }
@@ -879,16 +796,10 @@ void clusterProcessResponseAppendEntries(clusterLink *link,
 void clusterSendRequestVote(void) {
     unsigned char buf[sizeof(clusterMsg)];
     clusterMsg *hdr = (clusterMsg*) buf;
-    logEntryNode *entry;
-    listNode *ln;
-    long long last_log_index = 0, last_log_term = 0;
+    long long last_log_index, last_log_term;
 
-    ln = listIndex(server.cluster->log_entries, -1);
-    if (ln) {
-        entry = listNodeValue(ln);
-        last_log_index = entry->log_entry.index;
-        last_log_term = entry->log_entry.term;
-    }
+    last_log_index = logCurrentIndex();
+    last_log_term = logCurrentTerm();
 
     clusterBuildMessageHdr(hdr, CLUSTERMSG_TYPE_VOTEREQUEST);
     server.cluster->current_term++;
@@ -927,6 +838,7 @@ void clusterSendResponseAppendEntries(clusterLink *link, int ok) {
     clusterBuildMessageHdr(hdr, CLUSTERMSG_TYPE_APPENDENTRIES_RESP);
     hdr->data.responseappendentries.entries.term =
         server.cluster->current_term;
+    //FIXME: probably not needed
     hdr->data.responseappendentries.entries.index =
         logCurrentIndex();
     hdr->data.responseappendentries.entries.commit_index =
@@ -954,21 +866,14 @@ void clusterSendAppendEntries(clusterLink *link) {
     hdr->data.appendentries.entries.term = server.cluster->current_term;
     memcpy(hdr->data.appendentries.entries.leaderid, myself->name,
             PREZ_CLUSTER_NAMELEN);
-    hdr->data.appendentries.entries.prev_log_index = node->prev_log_index;
-    hdr->data.appendentries.entries.prev_log_term = node->prev_log_term;
-    hdr->data.appendentries.entries.leader_commit_index = 
+    hdr->data.appendentries.entries.prev_log_index = node->next_index-1;
+    hdr->data.appendentries.entries.prev_log_term = logGetTerm(node->next_index-1);
+    hdr->data.appendentries.entries.leader_commit_index =
         server.cluster->commit_index;
     node->last_sent_entry = NULL;
-    node->last_sent_term = server.cluster->current_term;
 
-    //FIXME
-    if (node->prev_log_index < server.cluster->start_index || 
-            node->prev_log_index > (listLength(server.cluster->log_entries + 
-                    server.cluster->start_index))) {
-        prezLog(PREZ_DEBUG, "AE Send Req: skip log_entries");
-    } else {
-        ln = listIndex(server.cluster->log_entries, 
-                node->prev_log_index-server.cluster->start_index);
+    if (logCurrentIndex() >= node->next_index) {
+        ln = getLogNode(node->next_index);
         while(ln && logcount < server.cluster->log_max_entries_per_request) {
             le_node = listNodeValue(ln);
             hdr->data.appendentries.entries.log_entries[logcount].term = 
@@ -990,9 +895,8 @@ void clusterSendAppendEntries(clusterLink *link) {
             ln_next = listNextNode(ln);
             logcount++;
             node->last_sent_entry = listNodeValue(ln);
-            node->prev_log_term = le_node->log_entry.term;
             ln = ln_next;
-        } 
+        }
     }
     hdr->data.appendentries.entries.log_entries_count = htons(logcount);
 
@@ -1010,6 +914,42 @@ void clusterSendAppendEntries(clusterLink *link) {
     clusterSendMessage(link,buf,ntohl(hdr->totlen));
 }
 
+void clusterUpdateCommitIndex(void) {
+    dictIterator *di;
+    dictEntry *de;
+    long long commit_index, *log_indices;
+    int i=0;
+
+    /* Committing log index by counting replicas is done only for log
+     * index in current term and not for previous terms. This means
+     * that when all nodes are shut and restarted, then the current
+     * leader needs to receive atleast one request so that logCommitIndex
+     * can happen for the entry in current term which in turn will trigger
+     * commit for previous entries. After this, previous entries will be
+     * available for clients to query */
+    di = dictGetSafeIterator(server.cluster->nodes);
+    log_indices = zmalloc(sizeof(long long)*
+            dictSize(server.cluster->nodes));
+    while((de = dictNext(di)) != NULL) {
+        clusterNode *cnode = dictGetVal(de);
+        log_indices[i++] = cnode->match_index;
+    }
+    dictReleaseIterator(di);
+    qsort(log_indices,dictSize(server.cluster->nodes),
+            sizeof(long long),
+            compareIndices);
+    reverseIndices(log_indices,dictSize(server.cluster->nodes));
+    commit_index = log_indices[quorumSize-1];
+    if (commit_index > server.cluster->commit_index &&
+            server.cluster->current_term == logGetTerm(commit_index)) {
+        logSync();
+        server.cluster->commit_index = commit_index;
+        prezLog(PREZ_DEBUG, "Upd cmtidx: %lld",
+                commit_index);
+    }
+    zfree(log_indices);
+}
+
 void clusterDoBeforeSleep(int flags)
 {
     return;
@@ -1021,7 +961,8 @@ void clusterDoBeforeSleep(int flags)
 
 void clusterCron(void) {
     mstime_t now = mstime();
-    mstime_t election_timeout; 
+    mstime_t election_timeout;
+    long long last_log_index;
     dictIterator *di;
     dictEntry *de;
 
@@ -1057,6 +998,12 @@ void clusterCron(void) {
     }
     dictReleaseIterator(di);
 
+    /* Apply to state machine if possible */
+    while (server.cluster->commit_index > server.cluster->last_applied) {
+        server.cluster->last_applied++;
+        logApply(server.cluster->last_applied);
+    }
+
     election_timeout = server.cluster->election_timeout + /* Fixed delay. */
         random() % server.cluster->election_timeout; /* Random delay between 0 
                                                         and election_timeout ms */
@@ -1089,12 +1036,24 @@ void clusterCron(void) {
                    server.cluster->current_term);
             server.cluster->state = PREZ_LEADER;
             server.cluster->leader = zstrdup(server.name);
+
+            last_log_index = logCurrentIndex();
+
+            di = dictGetSafeIterator(server.cluster->nodes);
+            while((de = dictNext(di)) != NULL) {
+                clusterNode *node = dictGetVal(de);
+
+                if (node->flags & (PREZ_NODE_MYSELF|PREZ_NODE_NOADDR)) continue;
+                node->next_index = last_log_index+1;
+                node->match_index = 0;
+            }
         }
     }
 
     /* Leader */
     // Send heartbeat to all peers
     if (server.cluster->state == PREZ_LEADER) {
+        clusterUpdateCommitIndex();
         di = dictGetSafeIterator(server.cluster->nodes);
         while((de = dictNext(di)) != NULL) {
             clusterNode *node = dictGetVal(de);
@@ -1110,5 +1069,4 @@ void clusterCron(void) {
         }
         dictReleaseIterator(di);
     }
-
 }

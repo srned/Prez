@@ -39,6 +39,22 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 
+/* Log Utilities */
+
+listNode *getLogNode(long long index) {
+    listNode *n;
+    n = listIndex(server.cluster->log_entries,(index-1-logLength));
+    return n;
+}
+
+logEntryNode *getLogEntry(long long index) {
+    listNode *n;
+    logEntryNode *en=NULL;
+    n = getLogNode(index);
+    if (n) en = listNodeValue(n);
+    return en;
+}
+
 /* Log file loading */
 
 /* Load the log file and read the log entries 
@@ -137,56 +153,42 @@ fmterr:
     exit(1);
 }
 
-int logTruncate(long long index, long long term) {
+int logVerifyAppend(long long index, long long term) {
+    logEntryNode *entry;
+
+    if (!index) return PREZ_OK;
+    if (index > logLength) {
+        prezLog(PREZ_NOTICE, "Index doesn't exist. length:%lu "
+                "index:%lld term:%lld",
+                logLength, index, term);
+        return PREZ_ERR;
+    }
+
+    entry = getLogEntry(index);
+    if (entry->log_entry.term != term) {
+        prezLog(PREZ_NOTICE, "logVerifyAppend: Entry at index doesn't match term. "
+                "index %lld term %lld",
+                index, term);
+        return PREZ_ERR;
+    }
+    return PREZ_OK;
+}
+
+int logTruncate(long long index) {
     logEntryNode *entry;
     listNode *ln;
     listIter li;
 
-    if (index < server.cluster->commit_index) {
-        prezLog(PREZ_NOTICE, "Index is already committed. "
-                "committed:%lld index:%lld term:%lld", 
-                server.cluster->commit_index, index, term);
-        return PREZ_ERR;
-    }
-
-    if (index > server.cluster->start_index +
-            listLength(server.cluster->log_entries)) {
-        prezLog(PREZ_NOTICE, "Index doesn't exist. length:%lu "
-                "index:%lld term:%lld",
-                listLength(server.cluster->log_entries), index, term);
-        return PREZ_ERR;
-    }
-
-    if (index == server.cluster->start_index) {
-        prezLog(PREZ_DEBUG, "logTruncate: Clear log");
-        ftruncate(server.cluster->log_fd, 0);
-        listRelease(server.cluster->log_entries);
-        server.cluster->log_entries = listCreate();
-        server.cluster->log_current_size = 0;
-    } else {
-        entry = listNodeValue(listIndex(server.cluster->log_entries, 
-                    index - server.cluster->start_index-1));
-        if (entry->log_entry.term != term) {
-            prezLog(PREZ_NOTICE, "logTruncate: Entry at index doesn't match term. "
-                    "index %lld term %lld",
-                    index, term);
-            return PREZ_ERR;
-        }
-
-        if (index < server.cluster->start_index +
-                listLength(server.cluster->log_entries)) {
-            entry = listNodeValue(listIndex(server.cluster->log_entries,
-                        index - server.cluster->start_index));
-            ftruncate(server.cluster->log_fd, entry->position);
-            server.cluster->log_current_size = entry->position;
-            listRewind(server.cluster->log_entries, &li);
-            li.next = listIndex(server.cluster->log_entries,
-                    index - server.cluster->start_index);
-            while ((ln = listNext(&li)) != NULL) {
-                logEntryNode *le = listNodeValue(ln);
-                listDelNode(server.cluster->log_entries,ln);
-                zfree(le);
-            }
+    if (index < logLength) {
+        entry = getLogEntry(index);
+        ftruncate(server.cluster->log_fd, entry->position);
+        server.cluster->log_current_size = entry->position;
+        listRewind(server.cluster->log_entries, &li);
+        li.next = getLogNode(index);
+        while ((ln = listNext(&li)) != NULL) {
+            logEntryNode *le = listNodeValue(ln);
+            listDelNode(server.cluster->log_entries,ln);
+            zfree(le);
         }
     }
     return PREZ_OK;
@@ -223,22 +225,22 @@ int logWriteEntry(logEntry e) {
     sds buf = sdsempty();
     logEntryNode *en;
 
-    if (listLength(server.cluster->log_entries) > 0) {
-        en = listNodeValue(listIndex(server.cluster->log_entries,-1));
-        if (e.term < en->log_entry.term) {
-            prezLog(PREZ_NOTICE, "Cannot append entry with earlier term." 
-                    "term:%lld index:%lld, last term:%lld index:%lld",
-                    e.term, e.index, en->log_entry.term, en->log_entry.index);
-            return PREZ_ERR;
-        } else if (e.term == en->log_entry.term &&
-                e.index <= en->log_entry.index) {
-            prezLog(PREZ_NOTICE, "Cannot append entry with earlier index." 
-                    "term:%lld index:%lld, last term:%lld index:%lld",
-                    e.term, e.index, en->log_entry.term, en->log_entry.index);
-            return PREZ_ERR;
+    if (logLength > 0) {
+        en = getLogEntry(e.index);
+        if (en) {
+            if (en->log_entry.index == e.index && en->log_entry.term == e.term) {
+                return PREZ_OK;
+            } else if (e.term != en->log_entry.term &&
+                    e.index == en->log_entry.index) {
+                prezLog(PREZ_NOTICE, "Conflict detected, truncate"
+                        "new term:%lld index:%lld, last term:%lld",
+                        e.term, e.index, en->log_entry.term);
+                logTruncate(e.index);
+            }
         }
     }
 
+    /* Persist to log */
     argv[0] = createStringObjectFromLongLong(e.index);
     argv[1] = createStringObjectFromLongLong(e.term);
     argv[2] = createStringObject(e.commandName,strlen(e.commandName));
@@ -252,7 +254,8 @@ int logWriteEntry(logEntry e) {
     if (nwritten != (signed)sdslen(buf)) {
         prezLog(PREZ_NOTICE,"log write incomplete");
     }
-    
+
+    /* Append to log list */
     en = zmalloc(sizeof(*en));
     memset(en,0,sizeof(*en));
     en->log_entry.index = e.index;
@@ -265,7 +268,7 @@ int logWriteEntry(logEntry e) {
             en->log_entry.term,
             e.term,
             en->log_entry.index,
-            listLength(server.cluster->log_entries));
+            logLength);
     listAddNodeTail(server.cluster->log_entries,en);
 
     return PREZ_OK;
@@ -287,66 +290,60 @@ int logAppendEntries(clusterMsgDataAppendEntries entries) {
     return PREZ_OK;
 }
 
-int logCommitIndex(long long index) {
-    int i;
+int logCommitIndex(long long leader_commit_index) {
+    if (leader_commit_index > server.cluster->commit_index) {
+        server.cluster->commit_index =
+            ((leader_commit_index < logCurrentIndex()) ? leader_commit_index :
+             logCurrentIndex());
+    }
+
+    return PREZ_OK;
+}
+
+int logApply(long long index) {
+    int i,argc;
+    sds *argv;
+    robj **oargv;
+    struct prezCommand *cmd;
     prezClient *c;
 
-    if (index > server.cluster->start_index+
-            listLength(server.cluster->log_entries)) {
-        prezLog(PREZ_NOTICE,"commit index %lld set back to %lu",
-                index, listLength(server.cluster->log_entries));
-        index = server.cluster->start_index+
-            listLength(server.cluster->log_entries);
-    }
-    if (index < server.cluster->commit_index) return PREZ_OK;
+    logEntryNode *entry = getLogEntry(index);
 
-    for (i=server.cluster->commit_index+1;i<=index;i++) {
-        int eindex = i-1-server.cluster->start_index;
-        logEntryNode *entry = listNodeValue(listIndex(
-                    server.cluster->log_entries, eindex));
-        server.cluster->commit_index = entry->log_entry.index;
+    if (!entry) return PREZ_OK;
 
-        /* Process command which is what commit is really about */
-        if (server.cluster->state == PREZ_LEADER &&
+    /* Process command which is what commit is really about */
+    if (server.cluster->state == PREZ_LEADER &&
             (c = dictFetchValue(server.cluster->proc_clients,
-                    sdsfromlonglong(entry->log_entry.index)))) {
-            call(c);
-            dictDelete(server.cluster->proc_clients,
-                    sdsfromlonglong(entry->log_entry.index));
-        } else {
-            int i,argc;
-            sds *argv;
-            robj **oargv;
-            struct prezCommand *cmd;
-
-            argv = sdssplitargs(entry->log_entry.command,&argc);
-            if (argv == NULL) return PREZ_OK;
-            oargv = zmalloc(sizeof(robj*)*argc);
-            for(i=0;i<argc;i++) {
-                if (sdslen(argv[i])) {
-                    oargv[i] = createObject(PREZ_STRING,argv[i]);
-                } else {
-                    sdsfree(argv[i]);
-                }
-            }
-            zfree(argv);
-            cmd = lookupCommand(oargv[0]->ptr);
-            if (!cmd) {
-                prezLog(PREZ_NOTICE,"unknown command '%s'",
-                        (char*)oargv[0]->ptr);
-                return PREZ_OK;
-            } else if ((cmd->arity > 0 && cmd->arity != argc) ||
-                    (argc < -cmd->arity)) {
-                prezLog(PREZ_NOTICE,"wrong number of arguments for '%s' command",
-                        cmd->name);
-                return PREZ_OK;
-            }
-            cmd->proc(NULL,oargv,argc);
-            for(i=0;i<argc;i++) decrRefCount(oargv[i]);
-        }
-
-        /* return if join command */
+                                sdsfromlonglong(index)))) {
+        call(c);
+        dictDelete(server.cluster->proc_clients,
+                sdsfromlonglong(index));
+        return PREZ_OK;
     }
+    argv = sdssplitargs(entry->log_entry.command,&argc);
+    if (argv == NULL) return PREZ_OK;
+    oargv = zmalloc(sizeof(robj*)*argc);
+    for(i=0;i<argc;i++) {
+        if (sdslen(argv[i])) {
+            oargv[i] = createObject(PREZ_STRING,argv[i]);
+        } else {
+            sdsfree(argv[i]);
+        }
+    }
+    zfree(argv);
+    cmd = lookupCommand(oargv[0]->ptr);
+    if (!cmd) {
+        prezLog(PREZ_NOTICE,"unknown command '%s'",
+                (char*)oargv[0]->ptr);
+        return PREZ_OK;
+    } else if ((cmd->arity > 0 && cmd->arity != argc) ||
+            (argc < -cmd->arity)) {
+        prezLog(PREZ_NOTICE,"wrong number of arguments for '%s' command",
+                cmd->name);
+        return PREZ_OK;
+    }
+    cmd->proc(NULL,oargv,argc);
+    for(i=0;i<argc;i++) decrRefCount(oargv[i]);
     return PREZ_OK;
 }
 
@@ -372,6 +369,18 @@ long long logCurrentTerm(void) {
     logEntryNode *entry;
 
     ln = listIndex(server.cluster->log_entries, -1);
+    if (ln) {
+        entry = ln->value;
+        return(entry->log_entry.term);
+    }
+    return 0;
+}
+
+long long logGetTerm(long long index) {
+    listNode *ln;
+    logEntryNode *entry;
+
+    ln = getLogNode(index);
     if (ln) {
         entry = ln->value;
         return(entry->log_entry.term);

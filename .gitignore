@@ -29,4 +29,5 @@
 *.hex
 *.sh
 files
+tags
 prez-server

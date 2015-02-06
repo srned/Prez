@@ -602,7 +602,7 @@ void initServer() {
 
     server.pid = getpid();
     server.clients = listCreate();
-
+    server.clients_to_close = listCreate();
     createSharedObjects();
     //FIXME: adjustOpenFilesLimit();
     server.el = aeCreateEventLoop(server.maxclients+PREZ_EVENTLOOP_FDSET_INCR);

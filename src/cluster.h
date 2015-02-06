@@ -101,18 +101,19 @@ typedef struct clusterLink {
 } clusterLink;
 
 struct clusterNode {
-    mstime_t ctime; /* Node object creation time. */
-    char name[PREZ_CLUSTER_NAMELEN]; /* Node name, hex string, sha1-size */
+    char name[PREZ_CLUSTER_NAMELEN]; /* Node name */
     int flags;
-    mstime_t voted_time;     /* Last time we voted for a slave of this master */
-    mstime_t last_activity_time; 
-    long long prev_log_index;
-    long long prev_log_term;
+    mstime_t ctime;                /* Node object creation time */
+    mstime_t voted_time;           /* Last time we voted */
+    mstime_t last_activity_time;   /* To track heartbeat */
+
     logEntryNode *last_sent_entry;
-    long long last_sent_term;
-    char ip[PREZ_IP_STR_LEN];  /* Latest known IP address of this node */
-    int port;                   /* Latest known port of this node */
-    clusterLink *link;          /* TCP/IP link with this node */
+    long long next_index;
+    long long match_index;
+
+    char ip[PREZ_IP_STR_LEN];       /* Latest known IP address of this node */
+    int port;                       /* Latest known port of this node */
+    clusterLink *link;              /* TCP/IP link with this node */
 };
 typedef struct clusterNode clusterNode;
 
@@ -138,9 +139,8 @@ typedef struct clusterState {
     list *log_entries;      /* list of log_entries */
 
     // Volatile
-    long long start_index;
-    long long current_index;
     long long commit_index;
+    long long last_applied;
 
     // Log Specific
     char *log_filename;
@@ -203,11 +203,6 @@ union clusterMsgData {
     struct {
         clusterMsgDataResponseAppendEntries entries;
     } responseappendentries;
-
-    struct {
-        unsigned char data[2048];
-    } data;
-
 };
 
 typedef struct {
@@ -238,16 +233,24 @@ void clusterSendResponseAppendEntries(clusterLink *link, int ok);
 
 /* Log replication */
 int loadLogFile(void); 
-int logTruncate(long long index, long long term);
+int logTruncate(long long index);
 sds catLogEntry(sds dst, int argc, robj **argv);
 int logWriteEntry(logEntry e);
 int logAppendEntries(clusterMsgDataAppendEntries entries);
+int logVerifyAppend(long long index, long long term);
 int logCommitIndex(long long index);
+int logApply(long long index);
 int logSync(void);
 long long logCurrentIndex(void);
 long long logCurrentTerm(void);
+long long logGetTerm(long long index);
+
+/* Log Utilities */
+listNode *getLogNode(long long index);
+logEntryNode *getLogEntry(long long index);
 
 /* Functions as macros */
 #define quorumSize ((dictSize(server.cluster->nodes) / 2) + 1)
+#define logLength (listLength(server.cluster->log_entries))
 
 #endif
