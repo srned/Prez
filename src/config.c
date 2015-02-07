@@ -33,6 +33,7 @@
  */
 
 #include "prez.h"
+#include "cluster.h"
 
 static struct {
     const char     *name;
@@ -427,12 +428,22 @@ void loadServerConfigFromString(char *config) {
         } else if (!strcasecmp(argv[0],"cluster-config-file") && argc == 2) {
             zfree(server.cluster_configfile);
             server.cluster_configfile = zstrdup(argv[1]);
+        } else if (!strcasecmp(argv[0],"cluster-election-timeout") && argc == 2) {
+            server.cluster->election_timeout = strtoll(argv[1],NULL,10);
+            if (server.cluster->election_timeout <= 0) {
+                err = "cluster election timeout must be 1 or greater"; goto loaderr;
+            }
+        } else if (!strcasecmp(argv[0],"cluster-heartbeat-interval") && argc == 2) {
+            server.cluster->heartbeat_interval = strtoll(argv[1],NULL,10);
+            if (server.cluster->heartbeat_interval <= 0) {
+                err = "cluster heartbeat interval must be 1 or greater"; goto loaderr;
+            }
+#if 0
         } else if (!strcasecmp(argv[0],"cluster-node-timeout") && argc == 2) {
             server.cluster_node_timeout = strtoll(argv[1],NULL,10);
             if (server.cluster_node_timeout <= 0) {
                 err = "cluster node timeout must be 1 or greater"; goto loaderr;
             }
-#if 0
         } else if (!strcasecmp(argv[0],"cluster-migration-barrier")
                    && argc == 2)
         {
@@ -941,12 +952,10 @@ void configSetCommand(prezClient *c) {
 
         if (yn == -1) goto badfmt;
         server.cluster_require_full_coverage = yn;
-#endif
     } else if (!strcasecmp(c->argv[2]->ptr,"cluster-node-timeout")) {
         if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
             ll <= 0) goto badfmt;
         server.cluster_node_timeout = ll;
-#if 0
     } else if (!strcasecmp(c->argv[2]->ptr,"cluster-migration-barrier")) {
         if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
             ll < 0) goto badfmt;
@@ -956,6 +965,14 @@ void configSetCommand(prezClient *c) {
             ll < 0) goto badfmt;
         server.cluster_slave_validity_factor = ll;
 #endif
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-heartbeat-interval")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll <= 0) goto badfmt;
+        server.cluster->heartbeat_interval = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"cluster-election-timeout")) {
+        if (getLongLongFromObject(o,&ll) == PREZ_ERR ||
+            ll <= 0) goto badfmt;
+        server.cluster->election_timeout = ll;
     } else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);
@@ -1070,8 +1087,10 @@ void configGetCommand(prezClient *c) {
     config_get_numerical_field("min-slaves-max-lag",server.repl_min_slaves_max_lag);
 #endif
     config_get_numerical_field("hz",server.hz);
-    config_get_numerical_field("cluster-node-timeout",server.cluster_node_timeout);
+    config_get_numerical_field("cluster-election-timeout",server.cluster->election_timeout);
+    config_get_numerical_field("cluster-heartbeat-interval",server.cluster->heartbeat_interval);
 #if 0
+    config_get_numerical_field("cluster-node-timeout",server.cluster_node_timeout);
     config_get_numerical_field("cluster-migration-barrier",server.cluster_migration_barrier);
     config_get_numerical_field("cluster-slave-validity-factor",server.cluster_slave_validity_factor);
     config_get_numerical_field("repl-diskless-sync-delay",server.repl_diskless_sync_delay);

@@ -150,20 +150,24 @@ fmterr:
     exit(1);
 }
 
-void clusterInit(void) {
-
+void initClusterConfig(void) {
     server.cluster = zmalloc(sizeof(clusterState));
     server.cluster->myself = NULL;
     server.cluster->size = 1;
-    server.cluster->nodes = dictCreate(&clusterNodesDictType,NULL);
     server.cluster->stats_bus_messages_sent = 0;
     server.cluster->stats_bus_messages_received = 0;
+    server.cluster->election_timeout = PREZ_CLUSTER_ELECTION_TIMEOUT;
+    server.cluster->heartbeat_interval = PREZ_CLUSTER_HEARTBEAT_INTERVAL;
 
+    return;
+}
+
+void clusterInit(void) {
+
+    server.cluster->nodes = dictCreate(&clusterNodesDictType,NULL);
     server.cluster->state = PREZ_FOLLOWER;
     server.cluster->leader = sdsempty();
     server.cluster->voted_for = sdsempty();
-    server.cluster->election_timeout = PREZ_CLUSTER_ELECTION_TIMEOUT;
-    server.cluster->heartbeat_interval = PREZ_CLUSTER_HEARTBEAT_INTERVAL;
     server.cluster->synced_nodes = dictCreate(&clusterNodesDictType,NULL);
     server.cluster->proc_clients = dictCreate(&clusterProcClientsDictType,NULL);
 
@@ -184,7 +188,7 @@ void clusterInit(void) {
         myself = server.cluster->myself =
             createClusterNode(NULL,PREZ_NODE_MYSELF);//PREZ_NODE_MYSELF|PREZ_NODE_MASTER);
         prezLog(PREZ_NOTICE,"No cluster configuration found, I'm %.40s",
-            myself->name);
+                myself->name);
         clusterAddNode(myself);
     }
 
@@ -192,7 +196,7 @@ void clusterInit(void) {
     server.cfd_count = 0;
 
     if (listenToPort(server.cport,
-        server.cfd,&server.cfd_count) == PREZ_ERR)
+                server.cfd,&server.cfd_count) == PREZ_ERR)
     {
         exit(1);
     } else {
@@ -202,9 +206,9 @@ void clusterInit(void) {
 
         for (j = 0; j < server.cfd_count; j++) {
             if (aeCreateFileEvent(server.el, server.cfd[j], AE_READABLE,
-                clusterAcceptHandler, NULL) == AE_ERR)
-                    prezPanic("Unrecoverable error creating prez Cluster "
-                                "file event.");
+                        clusterAcceptHandler, NULL) == AE_ERR)
+                prezPanic("Unrecoverable error creating prez Cluster "
+                        "file event.");
         }
     }
     /* Set myself->port to my listening port, we'll just need to discover

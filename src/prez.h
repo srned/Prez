@@ -563,6 +563,7 @@ void setCommand(prezClient *c, robj **argv, int argc);
 void configCommand(prezClient *c, robj **argv, int argc);
 
 /* Cluster */
+void initClusterConfig(void);
 void clusterInit(void);
 void clusterCron(void);
 void clusterProcessCommand(prezClient *c);

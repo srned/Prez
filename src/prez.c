@@ -816,6 +816,9 @@ void initServerConfig() {
     server.assert_line = 0;
     server.bug_report_start = 0;
     server.watchdog_period = 0;
+
+    /* Cluster */
+    initClusterConfig();
 }
 
 unsigned int getLRUClock(void) {
