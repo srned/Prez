@@ -74,7 +74,8 @@ int loadLogFile(void) {
     if (fp && prez_fstat(fileno(fp),&sb) != -1 && sb.st_size == 0) {
         server.cluster->log_current_size = 0;
         fclose(fp);
-        return PREZ_ERR;
+        prezLog(PREZ_NOTICE,"Prez log empty");
+        return PREZ_OK;
     }
 
     if (fp == NULL) {
@@ -83,12 +84,15 @@ int loadLogFile(void) {
         exit(1);
     }
 
+    server.cluster->log_current_size = 0;
+
     while(1) {
         int argc, j, ok;
         unsigned long len;
         char buf[128];
         sds argsds;
         logEntryNode *entry;
+        size_t loglen;
 
         if (fgets(buf,sizeof(buf),fp) == NULL) {
             if (feof(fp))
@@ -99,6 +103,7 @@ int loadLogFile(void) {
         if (buf[0] != '*') goto fmterr;
         argc = atoi(buf+1);
         if (argc < 1) goto fmterr;
+        loglen = strlen(buf);
 
         entry = zmalloc(sizeof(*entry));
         for (j = 0; j < argc; j++) {
@@ -107,7 +112,7 @@ int loadLogFile(void) {
             len = strtol(buf+1,NULL,10);
             argsds = sdsnewlen(NULL,len);
             if (len && fread(argsds,len,1,fp) == 0) goto fmterr;
-
+            loglen += (len+strlen(buf));
             switch(j) {
                 case LOG_TYPE_INDEX:
                     ok = string2ll(argsds,len,&entry->log_entry.index);
@@ -130,8 +135,11 @@ int loadLogFile(void) {
                     break;
             }
             if (fread(buf,2,1,fp) == 0) goto fmterr; /* discard CRLF */
+            loglen  += 2;
         }
-        //FIXME: fill Position
+        entry->position = server.cluster->log_current_size;
+        server.cluster->log_current_size += loglen;
+
         listAddNodeTail(server.cluster->log_entries, entry);
     }
 
